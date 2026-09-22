@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+data/*
+!data/.gitkeep
+!data/WS2_NOTES.md
+checkpoints/
+scores/
+logs/
+results/
+nohup.out
+.DS_Store
+*.parquet
