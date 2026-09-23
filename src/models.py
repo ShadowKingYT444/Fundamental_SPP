@@ -6,6 +6,8 @@ All models map (batch, L=252, F) -> (batch,) scores. The GNN additionally takes
 Panel / data conventions live in train.py (see its module docstring).
 """
 
+import functools
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -18,6 +20,38 @@ D_STATE = 16
 # ---------------------------------------------------------------------------
 # utils
 # ---------------------------------------------------------------------------
+
+def _script_with_eager_fallback(fn):
+    """torch.jit.script with a permanent eager fallback.
+
+    TorchScript lowers its CUDA kernels through NVRTC on first call; on
+    machines with a broken NVRTC install (seen on Colab: ``nvrtc: error:
+    failed to open libnvrtc-builtins.so``) that raises RuntimeError and would
+    kill training outright. The eager Python loop below runs the identical
+    ops in the identical order, so the fallback is bit-identical -- just
+    slower. Only NVRTC failures trigger the fallback (matched on the
+    exception message); any other script error still raises, so real bugs in
+    the scripted code are never silently masked. Once triggered, the fallback
+    is permanent for the process.
+    """
+    try:
+        scripted = torch.jit.script(fn)
+    except Exception:
+        return fn
+    state = {'script_ok': True}
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        if state['script_ok']:
+            try:
+                return scripted(*args, **kwargs)
+            except RuntimeError as e:
+                if 'nvrtc' not in str(e).lower():
+                    raise
+                state['script_ok'] = False
+        return fn(*args, **kwargs)
+
+    return wrapper
 
 def count_parameters(model: nn.Module) -> int:
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -59,11 +93,14 @@ def _sequential_scan(a: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
     return torch.stack(outs, dim=1)
 
 
-@torch.jit.script
 def _scan_forward(dA: torch.Tensor, delta: torch.Tensor, Bm: torch.Tensor,
                   Cm: torch.Tensor, xh: torch.Tensor,
                   D: torch.Tensor) -> torch.Tensor:
-    """Scripted selective-scan forward: h_t = dA_t*h_{t-1} + delta_t*B_t*x_t."""
+    """Selective-scan forward: h_t = dA_t*h_{t-1} + delta_t*B_t*x_t.
+
+    Scripted when possible (see _script_with_eager_fallback); the eager loop
+    is bit-identical, only slower.
+    """
     B, L, di = xh.shape
     n = Bm.shape[2]
     h = torch.zeros((B, di, n), dtype=xh.dtype, device=xh.device)
@@ -76,7 +113,9 @@ def _scan_forward(dA: torch.Tensor, delta: torch.Tensor, Bm: torch.Tensor,
     return y
 
 
-@torch.jit.script
+_scan_forward = _script_with_eager_fallback(_scan_forward)
+
+
 def _scan_backward(dA: torch.Tensor, delta: torch.Tensor, Bm: torch.Tensor,
                    Cm: torch.Tensor, xh: torch.Tensor, D: torch.Tensor,
                    gy: torch.Tensor):
@@ -130,8 +169,12 @@ def _scan_backward(dA: torch.Tensor, delta: torch.Tensor, Bm: torch.Tensor,
     return gdA, gdelta, gBm, gCm, gxh, gD
 
 
+_scan_backward = _script_with_eager_fallback(_scan_backward)
+
+
 class _SelectiveScanFn(torch.autograd.Function):
-    """Memory-light selective scan: scripted forward, manual adjoint backward.
+    """Memory-light selective scan: scripted-if-available forward, manual
+    adjoint backward.
 
     Avoids autograd tracing the 252-step loop (which stores ~GBs of
     intermediates); backward recomputes states once and runs one reverse pass.
