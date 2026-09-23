@@ -1,3 +1,15 @@
+## 2026-09-23 ~08:20 UTC
+- Reviewed chenliu-1996/figures4papers; adopted its house style for the
+  report visuals: sans-serif typography, minimal spines, frameless legends,
+  semantic palette (blue #0F4D92 = key method MISS/fund63, red = contrasts,
+  neutrals = baselines), black-edged bars, dpi=300 PNG + vector PDF export.
+- Added `src/plot_style.py` (style preset) and `src/make_figures.py`
+  (Fig 1 equity curves, Fig 2 architecture x regime Sharpe bars,
+   Fig 3 cost sensitivity, Fig 4 bootstrap of Sharpe difference).
+  All four templates smoke-tested with synthetic data (renders verified).
+- `src/evaluate.py` now also writes daily net-return series to
+  `results/equity/<model>_<regime>.csv` so Figure 1 can be built at the end.
+
 # Full sweep — status (updated 2026-09-22 22:50 UTC)
 
 ## Strategy (current)

@@ -386,6 +386,12 @@ def run_evaluation(scores_dir: Path, prices: pd.DataFrame | None,
             "n_boot": n_boot, "block": block,
             "n_files": len(files),
         },
+        # Concatenated daily net-return series per config (for equity curves).
+        "equity": {
+            ck: [(str(d.date()), float(v))
+                 for d, v in zip(rs.index, rs.to_numpy(dtype=float))]
+            for ck, rs in sorted(cfg_series.items())
+        },
         "per_year": per_year,
         "five_year": five_year,
         "paper_comparison": comparison,
@@ -535,7 +541,13 @@ def main(argv=None):
                          n_boot=args.n_boot, block=args.block, seed=args.seed)
     (out / "metrics.json").write_text(json.dumps(_jsonable(res), indent=2))
     (out / "tables.md").write_text(write_tables_md(res))
-    log.info("wrote %s and %s", out / "metrics.json", out / "tables.md")
+    eq_dir = out / "equity"
+    eq_dir.mkdir(parents=True, exist_ok=True)
+    for ck, pairs in res.get("equity", {}).items():
+        (eq_dir / f"{ck}.csv").write_text(
+            "date,ret\n" + "\n".join(f"{d},{v}" for d, v in pairs) + "\n")
+    log.info("wrote %s and %s and %d equity series",
+             out / "metrics.json", out / "tables.md", len(res.get("equity", {})))
 
 
 if __name__ == "__main__":
