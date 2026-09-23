@@ -1,3 +1,24 @@
+## 2026-09-23 ~11:15 UTC -- 6th SIGKILL; real diagnosis + streaming fix
+- The chunk-64 retrain ALSO died in epoch 2 (~10:0x UTC): the backward
+  chunk was NOT the root cause. Correction owed.
+- Cron run history revealed the bigger story: most earlier SIGKILLs
+  were duplicate-worker contention, not batch size. The 00:53 PDT tick
+  launched a second run_next.py mid-training (attempt B); evening
+  ticks did the same to the batch-512 attempts. Two training
+  processes = 2x memory = OOM killer. The lockfile (verified working
+  at the 09:53 tick) ends this.
+- Measured real footprint: bare MISS training state peaks ~2.15 GB;
+  + panel + 867 MB materialized windows put the process near the
+  edge on the 7.7 GiB box. No progressive leak found (40-iter test
+  flat).
+- Fix: `run_train.py` now streams windows per batch from the panel
+  (`batch_windows`, verified bit-identical to materialized) instead
+  of holding the 867 MB array; per-50-batch RSS + MemAvailable
+  logging added for forensics. Pure impl detail, disclosed in
+  REPORT.md.
+- Long driver relaunched (nohup, `logs/long_driver_20260923b.log`),
+  retraining `miss_tech63_2024`. Repo remote main = 6e1396e.
+
 ## 2026-09-23 ~09:10 UTC -- monitor killed the long driver; hardened
 - The 09:02 monitor tick killed the freshly launched long driver
   within ~3 min (no live-lock check existed in the cron instructions).
@@ -95,3 +116,18 @@ Order: miss → lstm → stockmixer → gnn; regimes fund63 → tech63 → tech5
 - MISS scan: gradcheck passed; assoc-scan rewrite attempted then reverted
   (14× slower on this box — low memory bandwidth favors sequential scan).
 - evaluate.py table writer fixed for missing configs.
+
+## 2026-09-23 11:16 UTC — memory-stability evidence (synthetic) + live driver state
+- Ran a synthetic MISS train loop (batch 256, chunk 64, B=256/L=252/F=15, 40
+  iters, Huber loss, Adam) on this box: peak RSS stabilized at **~2.15 GB**
+  from iter 5 through iter 40 — **no progressive leak** in the scan loop at
+  these settings. Model build 0.30 GB -> 2.14 GB by iter 5 -> flat 2.15 GB.
+- This is evidence about the scan loop only, NOT proof the real train loop
+  survives: the real loop additionally holds streamed window batches, the
+  full optimizer state, validation RankIC passes, and checkpoint writes.
+- Real run state: long driver (run_next --time-budget 20000 --allow-long,
+  started 11:13 UTC) is training miss_tech63_2024 (batch 256, chunk 64,
+  streamed batch_windows). At 11:16 UTC the train process was actively
+  running (15 threads, RSS 1.89 GB and climbing toward the synthetic peak).
+  First mem-log lines (every 50 batches) not yet due. No verdict until this
+  run completes or fails; prior confident root-cause claims were wrong.
