@@ -138,9 +138,11 @@ def _mem_gb():
 
 
 def train_one_epoch(model, opt, panel, samples, batch_size, epoch, seed,
-                    model_name, price_mat=None, train_arrays=None):
+                    model_name, price_mat=None, train_arrays=None,
+                    device='cpu'):
+    device = torch.device(device)
     model.train()
-    gen = torch.Generator().manual_seed(seed + epoch)
+    gen = torch.Generator(device=device).manual_seed(seed + epoch)
     rng = np.random.default_rng(seed + epoch)
     total, hub, rnk, nb = 0.0, 0.0, 0.0, 0
     if model_name in CROSS_SECTIONAL:
@@ -149,11 +151,11 @@ def train_one_epoch(model, opt, panel, samples, batch_size, epoch, seed,
             X, y, tickers, sectors = panel.date_batch(date)
             if len(X) < 8:
                 continue
-            Xt = torch.from_numpy(X)
-            yt = torch.from_numpy(y)
+            Xt = torch.from_numpy(X).to(device)
+            yt = torch.from_numpy(y).to(device)
             if model_name == 'gnn':
                 rets = price_mat.trailing_returns(tickers, date, 63)
-                ei = build_graph(np.asarray(sectors), rets, top_k=5)
+                ei = build_graph(np.asarray(sectors), rets, top_k=5).to(device)
                 scores = model(Xt, ei)
             else:
                 scores = model(Xt)
@@ -167,8 +169,7 @@ def train_one_epoch(model, opt, panel, samples, batch_size, epoch, seed,
             rnk += comps['rank'].item()
             nb += 1
     else:
-        order = torch.randperm(len(samples),
-                               generator=torch.Generator().manual_seed(seed + epoch))
+        order = torch.randperm(len(samples), generator=gen)
         for b in range(0, len(order), batch_size):
             idx = order[b:b + batch_size]
             if len(idx) < 8:
@@ -176,6 +177,7 @@ def train_one_epoch(model, opt, panel, samples, batch_size, epoch, seed,
             # Stream windows from the panel instead of fancy-indexing a
             # materialized 867 MB array (OOM insurance; identical values).
             xb, yb = batch_windows(panel, samples, idx)
+            xb, yb = xb.to(device), yb.to(device)
             scores = model(xb)
             loss, comps = combined_loss(scores, yb, generator=gen)
             opt.zero_grad()
@@ -197,17 +199,19 @@ def train_one_epoch(model, opt, panel, samples, batch_size, epoch, seed,
 
 
 @torch.no_grad()
-def evaluate(model, panel, val_dates, model_name, price_mat=None):
+def evaluate(model, panel, val_dates, model_name, price_mat=None,
+             device='cpu'):
+    device = torch.device(device)
     model.eval()
     per_date = []
     for date in val_dates:
         X, y, tickers, sectors = panel.date_batch(date)
         if len(X) == 0:
             continue
-        Xt = torch.from_numpy(X)
+        Xt = torch.from_numpy(X).to(device)
         if model_name == 'gnn':
             rets = price_mat.trailing_returns(tickers, date, 63)
-            ei = build_graph(np.asarray(sectors), rets, top_k=5)
+            ei = build_graph(np.asarray(sectors), rets, top_k=5).to(device)
             scores = model(Xt, ei).cpu().numpy()
         else:
             scores = model(Xt).cpu().numpy()
@@ -230,12 +234,20 @@ def main(argv=None):
     p.add_argument('--patience', type=int, default=2)
     p.add_argument('--seed', type=int, default=42)
     p.add_argument('--threads', type=int, default=2)
+    p.add_argument('--device', default='auto',
+                   help="torch device: 'auto' (cuda if available, else cpu), "
+                        "'cpu', or 'cuda'. CPU numerics are unchanged.")
     args = p.parse_args(argv)
 
     torch.set_num_threads(args.threads)
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
+    device = args.device
+    if device == 'auto':
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    log.info('device=%s (cuda_available=%s)', device,
+             torch.cuda.is_available())
     t0 = time.time()
 
     reg = REGIMES[args.regime]
@@ -277,6 +289,7 @@ def main(argv=None):
         raise SystemExit('no training samples')
 
     model = build_model(args.model, panel.F)
+    model.to(device)
     n_params = count_parameters(model)
     log.info('model=%s regime=%s year=%d params=%d (~%.3fM)',
              args.model, args.regime, Y, n_params, n_params / 1e6)
@@ -299,8 +312,10 @@ def main(argv=None):
         ep0 = time.time()
         tr, hub, rnk = train_one_epoch(model, opt, panel, samples,
                                        args.batch_size, epoch, args.seed,
-                                       args.model, price_mat, train_arrays)
-        val_ic, n_v = evaluate(model, panel, val_dates, args.model, price_mat)
+                                       args.model, price_mat, train_arrays,
+                                       device)
+        val_ic, n_v = evaluate(model, panel, val_dates, args.model, price_mat,
+                               device)
         log.info('epoch %d/%d loss=%.4f (huber=%.4f rank=%.4f) '
                  'val_RankIC=%.4f (%d dates) %.1fs',
                  epoch + 1, args.epochs, tr, hub, rnk, val_ic, n_v,

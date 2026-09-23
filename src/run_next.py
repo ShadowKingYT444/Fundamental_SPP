@@ -7,7 +7,8 @@ budget, then exits. Fully resumable -- a killed run simply retries the
 current config next time (checkpoints + score CSVs are the resume markers).
 
 Usage:
-    python src/run_next.py [--time-budget SECONDS]   (default 3000)
+    python src/run_next.py [--time-budget SECONDS] [--allow-long]
+                          [--device auto|cpu|cuda]
 
 Prints DONE when all 60 configs are complete. Exit code always 0 unless
 invoked incorrectly.
@@ -59,12 +60,23 @@ def next_pending(allow_long=False):
     return None
 
 
+def _resolve_device(dev):
+    if dev == 'auto':
+        import torch
+        return 'cuda' if torch.cuda.is_available() else 'cpu'
+    return dev
+
+
 def main(argv=None):
     args = argv if argv is not None else sys.argv[1:]
     budget = 3000.0
     if '--time-budget' in args:
         budget = float(args[args.index('--time-budget') + 1])
     allow_long = '--allow-long' in args
+    device = 'auto'
+    if '--device' in args:
+        device = args[args.index('--device') + 1]
+    device = _resolve_device(device)
     # Single-driver lock (2026-09-23): the hourly monitor cron and ad-hoc
     # foreground runs must never overlap -- two drivers each materialize the
     # ~0.9 GB training windows and the OOM killer takes one of them. Whoever
@@ -99,8 +111,12 @@ def main(argv=None):
         try:
             if not ckpt_ok(model, regime, year):
                 train_cmd = [sys.executable, 'src/run_train.py', '--model', model,
-                             '--regime', regime, '--year', str(year)]
-                if key in BATCH_OVERRIDES:
+                             '--regime', regime, '--year', str(year),
+                             '--device', device]
+                # OOM fallback is CPU-only: on CUDA the 7.7 GiB host-RAM
+                # SIGKILLs don't apply (batch-512 scan state ~200-400 MB
+                # fits a 16 GB GPU comfortably), so keep batch 512 there.
+                if key in BATCH_OVERRIDES and device == 'cpu':
                     train_cmd += ['--batch-size', str(BATCH_OVERRIDES[key])]
                     print(f'[{key}] OOM fallback: batch_size={BATCH_OVERRIDES[key]}',
                           flush=True)
