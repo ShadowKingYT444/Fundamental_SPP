@@ -131,3 +131,20 @@ Order: miss → lstm → stockmixer → gnn; regimes fund63 → tech63 → tech5
   running (15 threads, RSS 1.89 GB and climbing toward the synthetic peak).
   First mem-log lines (every 50 batches) not yet due. No verdict until this
   run completes or fails; prior confident root-cause claims were wrong.
+
+## 2026-09-23 13:15 UTC — long driver died mid-epoch-3 (7th death of miss_tech63_2024)
+- Long driver (run_next --time-budget 20000 --allow-long, started 11:13 UTC)
+  completed epoch 1 (1902s, val_RankIC=-0.0178) and epoch 2 (1892s,
+  val_RankIC=0.0004, new best), then died silently between 12:27:27
+  (epoch 3, batch 100/225) and 12:54:29 UTC. No kernel OOM trace visible
+  from inside the container.
+- Memory was FLAT the whole run: rss 3.01->3.02 GB, mem_avail 4.3-4.5 GB.
+  Not a progressive leak. Cause of death unknown; earlier confident
+  root-cause claims were wrong, so no new claim here.
+- Epoch-2 "new best" checkpoint (checkpoints/miss_tech63_2024.pt, 708 KB)
+  verified loadable; training_completed not stamped (driver died mid-epoch-3).
+- The 12:54 UTC hourly tick took the free lock, ran foreground 3000s budget
+  (long configs skipped per rules), completed nothing (still 8 ok / 1 failed),
+  and died with its own observation window (~1012s in).
+- Current state: NO sweep process running. Sweep stalled: miss_tech63_2024 and
+  miss_tech63_2025 need a dedicated long driver; hourly ticks skip them.
