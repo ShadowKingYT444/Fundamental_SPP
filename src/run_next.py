@@ -36,6 +36,15 @@ LOCK_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 # and will be documented in REPORT.md.
 BATCH_OVERRIDES = {'miss_tech63_2024': 256, 'miss_tech63_2025': 256}
 
+# Long configs (2026-09-23): at batch 256 these need ~100-330 min of
+# UNINTERRUPTED training (33 min/epoch, patience 2, up to 10 epochs), which
+# exceeds the hourly monitor tick's 3600 s timeout. A tick that starts one
+# burns ~50 min and is killed mid-training; run_train.py then deletes the
+# partial checkpoint, so the work is pure waste. The monitor tick must NOT
+# start these -- skip them unless --allow-long is passed. They are handled
+# by a dedicated long driver holding the lockfile.
+LONG_CONFIGS = {'miss_tech63_2024', 'miss_tech63_2025'}
+
 
 def next_pending():
     for model in MODELS:
@@ -52,6 +61,7 @@ def main(argv=None):
     budget = 3000.0
     if '--time-budget' in args:
         budget = float(args[args.index('--time-budget') + 1])
+    allow_long = '--allow-long' in args
     # Single-driver lock (2026-09-23): the hourly monitor cron and ad-hoc
     # foreground runs must never overlap -- two drivers each materialize the
     # ~0.9 GB training windows and the OOM killer takes one of them. Whoever
@@ -81,6 +91,10 @@ def main(argv=None):
             break
         model, regime, year = nxt
         key = f'{model}_{regime}_{year}'
+        if key in LONG_CONFIGS and not allow_long:
+            print(f'[{key}] needs >1h uninterrupted training; skipping '
+                  f'(rerun with --allow-long from a long driver)', flush=True)
+            break
         print(f'[{key}] starting', flush=True)
         t1 = time.time()
         try:
