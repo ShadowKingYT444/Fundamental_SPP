@@ -142,7 +142,16 @@ def train_one_epoch(model, opt, panel, samples, batch_size, epoch, seed,
                     device='cpu'):
     device = torch.device(device)
     model.train()
+    # On CPU the original single-generator stream is kept exactly as-is (so
+    # previously trained configs remain bit-reproducible). On CUDA the
+    # streams are split: torch.randperm runs on CPU and must use a CPU
+    # generator, while the ranking-loss pair sampler gets a device generator.
     gen = torch.Generator(device=device).manual_seed(seed + epoch)
+    if device.type == 'cpu':
+        order_gen = loss_gen = gen
+    else:
+        order_gen = torch.Generator().manual_seed(seed + epoch)
+        loss_gen = gen
     rng = np.random.default_rng(seed + epoch)
     total, hub, rnk, nb = 0.0, 0.0, 0.0, 0
     if model_name in CROSS_SECTIONAL:
@@ -159,7 +168,7 @@ def train_one_epoch(model, opt, panel, samples, batch_size, epoch, seed,
                 scores = model(Xt, ei)
             else:
                 scores = model(Xt)
-            loss, comps = combined_loss(scores, yt, generator=gen)
+            loss, comps = combined_loss(scores, yt, generator=loss_gen)
             opt.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -169,7 +178,7 @@ def train_one_epoch(model, opt, panel, samples, batch_size, epoch, seed,
             rnk += comps['rank'].item()
             nb += 1
     else:
-        order = torch.randperm(len(samples), generator=gen)
+        order = torch.randperm(len(samples), generator=order_gen)
         for b in range(0, len(order), batch_size):
             idx = order[b:b + batch_size]
             if len(idx) < 8:
@@ -179,7 +188,7 @@ def train_one_epoch(model, opt, panel, samples, batch_size, epoch, seed,
             xb, yb = batch_windows(panel, samples, idx)
             xb, yb = xb.to(device), yb.to(device)
             scores = model(xb)
-            loss, comps = combined_loss(scores, yb, generator=gen)
+            loss, comps = combined_loss(scores, yb, generator=loss_gen)
             opt.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
