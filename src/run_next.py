@@ -23,6 +23,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from run_all import (MODELS, REGIMES, YEARS, STATUS_PATH, ckpt_ok,  # noqa: E402
                      save_status, score_ok)
 
+# OOM mitigation (2026-09-23): miss_tech63_2024 was SIGKILLed 3x in a row at
+# batch 512 on the 7.7 GiB box. Fall back to batch 256 for the remaining MISS
+# tech63 configs; halves activation memory. Documented simplification for
+# REPORT.md (batch size is paper-unspecified).
+BATCH_OVERRIDES = {'miss_tech63_2024': 256, 'miss_tech63_2025': 256}
+
 
 def next_pending():
     for model in MODELS:
@@ -57,9 +63,13 @@ def main(argv=None):
         t1 = time.time()
         try:
             if not ckpt_ok(model, regime, year):
-                subprocess.run(
-                    [sys.executable, 'src/run_train.py', '--model', model,
-                     '--regime', regime, '--year', str(year)], check=True)
+                train_cmd = [sys.executable, 'src/run_train.py', '--model', model,
+                             '--regime', regime, '--year', str(year)]
+                if key in BATCH_OVERRIDES:
+                    train_cmd += ['--batch-size', str(BATCH_OVERRIDES[key])]
+                    print(f'[{key}] OOM fallback: batch_size={BATCH_OVERRIDES[key]}',
+                          flush=True)
+                subprocess.run(train_cmd, check=True)
             if not score_ok(model, regime, year):
                 subprocess.run(
                     [sys.executable, 'src/run_score.py', '--model', model,

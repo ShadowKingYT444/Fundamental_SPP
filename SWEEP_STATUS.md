@@ -34,6 +34,9 @@ Order: miss → lstm → stockmixer → gnn; regimes fund63 → tech63 → tech5
 - Static best-effort sectors; trade events = entries + exits.
 - Max 10 epochs, early stopping patience 2, checkpoint = best val RankIC.
 - CPU-only, seed 0, Adam 1e-3, Huber + 0.25 × pairwise rank loss.
+- OOM fallback (2026-09-23): batch 256 for miss_tech63_2024/2025 only, after
+  miss_tech63_2024 was SIGKILLed 4× at batch 512 on the 7.7 GiB box.
+  (miss_tech63_2022/2023 each died 1–2× at 512 then recovered.)
 
 ## Validation completed
 - Score → backtest → evaluate chain: OK (lstm_tech5_2021 1-epoch smoke).
