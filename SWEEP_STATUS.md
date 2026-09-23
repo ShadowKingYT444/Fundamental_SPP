@@ -1,3 +1,20 @@
+## 2026-09-23 ~09:10 UTC -- monitor killed the long driver; hardened
+- The 09:02 monitor tick killed the freshly launched long driver
+  within ~3 min (no live-lock check existed in the cron instructions).
+  State stayed clean: no checkpoint, no partial scores (by design).
+- Cron `fundamental-spp-sweep-monitor` updated via cron.update:
+  step 1 now checks `results/.run_next.lock` for a live driver PID
+  and ends the tick quietly if one holds it; never kills a
+  lock-holding process.
+- `run_next.py`: new LONG_CONFIGS guard -- `miss_tech63_2024` /
+  `miss_tech63_2025` are skipped unless `--allow-long` is passed.
+  A 3600 s monitor tick cannot finish their ~2-5.5 h training, and
+  run_train.py deletes partial checkpoints, so starting one in a
+  tick is pure wasted CPU. Dedicated long driver handles them.
+- Long driver relaunched via nohup (`logs/long_driver_20260923.log`),
+  `--time-budget 20000 --allow-long`; retraining `miss_tech63_2024`
+  (batch 256 + chunk-64 backward). Repo remote main = c5c10d0.
+
 ## 2026-09-23 ~08:55 UTC -- incident + hardening
 - `miss_tech63_2024` at batch 256 was SIGKILLed a 5th time, ~20 min into
   epoch 2 (epoch 1 had completed and saved a checkpoint). Peak suspect:

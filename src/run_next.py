@@ -46,10 +46,13 @@ BATCH_OVERRIDES = {'miss_tech63_2024': 256, 'miss_tech63_2025': 256}
 LONG_CONFIGS = {'miss_tech63_2024', 'miss_tech63_2025'}
 
 
-def next_pending():
+def next_pending(allow_long=False):
     for model in MODELS:
         for regime in REGIMES:
             for year in YEARS:
+                key = f'{model}_{regime}_{year}'
+                if key in LONG_CONFIGS and not allow_long:
+                    continue  # handled by the dedicated long driver
                 if not (ckpt_ok(model, regime, year)
                         and score_ok(model, regime, year)):
                     return model, regime, year
@@ -85,16 +88,12 @@ def main(argv=None):
     t0 = time.time()
     ran = 0
     while time.time() - t0 < budget:
-        nxt = next_pending()
+        nxt = next_pending(allow_long)
         if nxt is None:
             print('DONE: all 60 configs complete', flush=True)
             break
         model, regime, year = nxt
         key = f'{model}_{regime}_{year}'
-        if key in LONG_CONFIGS and not allow_long:
-            print(f'[{key}] needs >1h uninterrupted training; skipping '
-                  f'(rerun with --allow-long from a long driver)', flush=True)
-            break
         print(f'[{key}] starting', flush=True)
         t1 = time.time()
         try:

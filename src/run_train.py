@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import random
+import resource
 import sys
 import time
 
@@ -81,7 +82,13 @@ def gather_batch(panel, samples, idx):
 
 
 def build_train_arrays(panel, samples):
-    """Materialize all training windows once: X (N,L,F), y (N,) torch tensors."""
+    """Materialize all training windows once: X (N,L,F), y (N,) torch tensors.
+
+    NOTE (2026-09-23): no longer used for training -- the 867 MB materialized
+    array kept the process near the OOM-killer edge on the 7.7 GiB box.
+    Training now streams windows per batch via ``batch_windows`` (identical
+    values, a pure implementation detail). Kept for reference/tests.
+    """
     N = len(samples)
     L, F = SEQ_LEN, panel.F
     X = torch.empty(N, L, F, dtype=torch.float32)
@@ -91,6 +98,43 @@ def build_train_arrays(panel, samples):
         X[i] = torch.from_numpy(w)
         y[i] = float(yv)
     return X, y
+
+
+def batch_windows(panel, samples, idx):
+    """Stack (B, L, F) windows for one batch directly from the panel.
+
+    Same values as fancy-indexing the materialized array, without the
+    ~867 MB resident copy. ``idx`` is an iterable of positions into
+    ``samples`` (already permuted by the caller).
+    """
+    ws, ys = [], []
+    for j in idx:
+        ti, pos = samples[int(j)]
+        w, yv = panel.get_window(ti, pos)
+        ws.append(w)
+        ys.append(yv)
+    Xb = np.stack(ws).astype(np.float32, copy=False)
+    yb = np.asarray(ys, dtype=np.float32)
+    return torch.from_numpy(Xb), torch.from_numpy(yb)
+
+
+def _mem_gb():
+    """(process RSS GB, system available GB) for the training log."""
+    try:
+        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e6
+    except Exception:
+        rss = float('nan')
+    try:
+        avail = None
+        with open('/proc/meminfo') as f:
+            for line in f:
+                if line.startswith('MemAvailable'):
+                    avail = int(line.split()[1]) / 1e6
+                    break
+        avail = float('nan') if avail is None else avail
+    except Exception:
+        avail = float('nan')
+    return rss, avail
 
 
 def train_one_epoch(model, opt, panel, samples, batch_size, epoch, seed,
@@ -123,14 +167,15 @@ def train_one_epoch(model, opt, panel, samples, batch_size, epoch, seed,
             rnk += comps['rank'].item()
             nb += 1
     else:
-        X_all, y_all = train_arrays
-        order = torch.randperm(len(X_all),
+        order = torch.randperm(len(samples),
                                generator=torch.Generator().manual_seed(seed + epoch))
         for b in range(0, len(order), batch_size):
             idx = order[b:b + batch_size]
             if len(idx) < 8:
                 continue
-            xb, yb = X_all[idx], y_all[idx]
+            # Stream windows from the panel instead of fancy-indexing a
+            # materialized 867 MB array (OOM insurance; identical values).
+            xb, yb = batch_windows(panel, samples, idx)
             scores = model(xb)
             loss, comps = combined_loss(scores, yb, generator=gen)
             opt.zero_grad()
@@ -141,6 +186,11 @@ def train_one_epoch(model, opt, panel, samples, batch_size, epoch, seed,
             hub += comps['huber'].item()
             rnk += comps['rank'].item()
             nb += 1
+            if nb % 50 == 0:
+                rss, avail = _mem_gb()
+                log.info('batch %d/%d rss=%.2fGB mem_avail=%.2fGB',
+                         nb, (len(order) + batch_size - 1) // batch_size,
+                         rss, avail)
     if nb == 0:
         return float('nan'), float('nan'), float('nan')
     return total / nb, hub / nb, rnk / nb
@@ -221,11 +271,8 @@ def main(argv=None):
     else:
         samples = panel.sample_index(train_dates)
         log.info('%d train samples', len(samples))
-        log.info('materializing training windows ...')
-        t_mat = time.time()
-        train_arrays = build_train_arrays(panel, samples)
-        log.info('windows materialized: %s in %.1fs',
-                 tuple(train_arrays[0].shape), time.time() - t_mat)
+        # Windows are streamed per batch from the panel (see batch_windows);
+        # the old materialized 867 MB array is skipped as OOM insurance.
     if not samples:
         raise SystemExit('no training samples')
 
