@@ -14,6 +14,7 @@ invoked incorrectly.
 """
 
 import json
+import fcntl
 import os
 import subprocess
 import sys
@@ -23,10 +24,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from run_all import (MODELS, REGIMES, YEARS, STATUS_PATH, ckpt_ok,  # noqa: E402
                      save_status, score_ok)
 
-# OOM mitigation (2026-09-23): miss_tech63_2024 was SIGKILLed 3x in a row at
-# batch 512 on the 7.7 GiB box. Fall back to batch 256 for the remaining MISS
-# tech63 configs; halves activation memory. Documented simplification for
-# REPORT.md (batch size is paper-unspecified).
+LOCK_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         '..', 'results', '.run_next.lock')
+
+# OOM mitigation (2026-09-23): miss_tech63_2024 was SIGKILLed 5x on the
+# 7.7 GiB box (4x at batch 512, 1x at batch 256). Two fixes: (a) fall back to
+# batch 256 for the remaining MISS tech63 configs, halving per-batch
+# activations; (b) the selective-scan backward chunk is now 64 (was 128),
+# halving the peak (B, L, d_inner, d_state) state tensor to ~198 MB -- a pure
+# implementation detail, bit-identical numerics. Both are paper-unspecified
+# and will be documented in REPORT.md.
 BATCH_OVERRIDES = {'miss_tech63_2024': 256, 'miss_tech63_2025': 256}
 
 
@@ -45,6 +52,21 @@ def main(argv=None):
     budget = 3000.0
     if '--time-budget' in args:
         budget = float(args[args.index('--time-budget') + 1])
+    # Single-driver lock (2026-09-23): the hourly monitor cron and ad-hoc
+    # foreground runs must never overlap -- two drivers each materialize the
+    # ~0.9 GB training windows and the OOM killer takes one of them. Whoever
+    # holds the lock drives; the other exits quietly.
+    lock_path = os.path.normpath(LOCK_PATH)
+    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+    lock_fh = open(lock_path, 'w')
+    try:
+        fcntl.flock(lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print('run_next: another driver holds the lock; exiting quietly',
+              flush=True)
+        return
+    lock_fh.write(str(os.getpid()))
+    lock_fh.flush()
     if os.path.exists(STATUS_PATH):
         with open(STATUS_PATH) as f:
             status = json.load(f)

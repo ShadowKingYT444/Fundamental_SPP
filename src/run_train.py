@@ -239,6 +239,14 @@ def main(argv=None):
     ckpt_path = os.path.join(args.checkpoint_dir,
                              f'{args.model}_{args.regime}_{Y}.pt')
     os.makedirs(args.checkpoint_dir, exist_ok=True)
+    # Crash-safety (2026-09-23): a previous attempt may have died mid-training
+    # after saving an early "best" checkpoint. Training always starts from
+    # scratch, so a leftover checkpoint can only be partial -- remove it so
+    # ckpt_ok() can never mistake it for a completed training run.
+    if os.path.exists(ckpt_path):
+        log.info('removing stale checkpoint from a prior attempt: %s',
+                 ckpt_path)
+        os.remove(ckpt_path)
     best_ic, best_epoch, wait = float('-inf'), -1, 0
     for epoch in range(args.epochs):
         ep0 = time.time()
@@ -270,6 +278,13 @@ def main(argv=None):
     log.info('DONE %s %s %d best_val_RankIC=%.4f epoch=%d wall=%.1fs -> %s',
              args.model, args.regime, Y, best_ic, best_epoch + 1, wall,
              ckpt_path)
+    # Stamp completion: ckpt_ok() in run_all.py requires this flag, so a
+    # checkpoint from a run that died mid-training is never treated as done.
+    if os.path.exists(ckpt_path):
+        ckpt = torch.load(ckpt_path, map_location='cpu', weights_only=False)
+        ckpt['meta']['training_completed'] = True
+        torch.save(ckpt, ckpt_path)
+        log.info('stamped training_completed on %s', ckpt_path)
     print(json.dumps({'model': args.model, 'regime': args.regime, 'year': Y,
                       'best_val_rankic': best_ic, 'best_epoch': best_epoch + 1,
                       'wall_s': wall, 'checkpoint': ckpt_path}))

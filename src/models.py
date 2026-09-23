@@ -135,8 +135,10 @@ class _SelectiveScanFn(torch.autograd.Function):
 
     Avoids autograd tracing the 252-step loop (which stores ~GBs of
     intermediates); backward recomputes states once and runs one reverse pass.
-    The backward is chunked over the batch (128) to bound the peak
-    (B, L, d_inner, d_state) state tensor.
+    The backward is chunked over the batch (64) to bound the peak
+    (B, L, d_inner, d_state) state tensor: at 64*252*192*16 float32 = 198 MB.
+    Chunking is a pure implementation detail -- chunks are independent slices,
+    so numerics are bit-identical for any chunk size.
     """
 
     @staticmethod
@@ -148,7 +150,7 @@ class _SelectiveScanFn(torch.autograd.Function):
     def backward(ctx, gy):
         dA, delta, Bm, Cm, xh, D = ctx.saved_tensors
         B = xh.shape[0]
-        chunk, outs = 128, []
+        chunk, outs = 64, []
         # accumulate grads per chunk to bound peak memory
         gdA = torch.zeros_like(dA)
         gdelta = torch.zeros_like(delta)

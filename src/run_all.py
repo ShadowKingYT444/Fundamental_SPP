@@ -44,7 +44,12 @@ def ckpt_ok(model, regime, year):
         m = ckpt.get('meta', {})
         return (m.get('model') == model and m.get('regime') == regime
                 and m.get('year') == year
-                and abs(m.get('val_rankic', float('nan'))) >= 0)
+                and abs(m.get('val_rankic', float('nan'))) >= 0
+                # crash-safety (2026-09-23): only a checkpoint stamped by a
+                # training run that reached its DONE line counts. A partial
+                # checkpoint from a SIGKILLed run must trigger a retrain,
+                # never a score pass over a half-trained model.
+                and m.get('training_completed') is True)
     except Exception:
         return False
 

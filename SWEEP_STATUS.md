@@ -1,3 +1,26 @@
+## 2026-09-23 ~08:55 UTC -- incident + hardening
+- `miss_tech63_2024` at batch 256 was SIGKILLed a 5th time, ~20 min into
+  epoch 2 (epoch 1 had completed and saved a checkpoint). Peak suspect:
+  `_scan_backward`'s `(B, L, d_inner, d_state)` state tensor
+  (128*252*192*16 float32 = 396 MB per chunk) on top of the 867 MB
+  materialized windows + panel on the 7.7 GiB box.
+- The 08:53 hourly-monitor tick then launched a SECOND driver which,
+  because `ckpt_ok()` accepted the epoch-1 partial checkpoint, skipped
+  retraining and started SCORING a half-trained model. Killed it
+  (driver + scorer) before any score CSV was written -- no junk data.
+- Fixes committed: (1) selective-scan backward chunk 128 -> 64
+  (~198 MB peak; bit-identical numerics, pure impl detail);
+  (2) `run_train.py` deletes any stale checkpoint at start and stamps
+  `training_completed=True` in meta at DONE; (3) `ckpt_ok()` requires
+  the stamp, so partial checkpoints always trigger retrain;
+  (4) `run_next.py` takes an exclusive lockfile -- monitor ticks and
+  foreground runs can no longer overlap and double memory.
+- Stamped `training_completed` on the 8 already-finished configs;
+  quarantined the epoch-1 partial `miss_tech63_2024` checkpoint to
+  `checkpoints/quarantine/`.
+- Monitor cron stays enabled: with the lock + resume fixes it is now a
+  safe unattended driver.
+
 ## 2026-09-23 ~08:20 UTC
 - Reviewed chenliu-1996/figures4papers; adopted its house style for the
   report visuals: sans-serif typography, minimal spines, frameless legends,
