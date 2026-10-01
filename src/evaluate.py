@@ -161,6 +161,7 @@ def block_bootstrap_sharpe_diff(a: pd.Series, b: pd.Series,
         sb = sharpe_ann(pd.Series(rb[sel]))
         diffs[i] = sa - sb
     diffs = diffs[np.isfinite(diffs)]
+    observed = float(sharpe_ann(pd.Series(ra)) - sharpe_ann(pd.Series(rb)))
     return {
         "n_boot": int(n_boot),
         "block": int(block),
@@ -170,6 +171,8 @@ def block_bootstrap_sharpe_diff(a: pd.Series, b: pd.Series,
         "ci_97.5": float(np.quantile(diffs, 0.975)),
         "p_diff_gt_0": float(np.mean(diffs > 0)),
         "p_value_onesided": float(np.mean(diffs <= 0)),  # H0: diff <= 0
+        "observed": observed,
+        "diffs": [float(x) for x in diffs],
     }
 
 
@@ -340,8 +343,9 @@ def run_evaluation(scores_dir: Path, prices: pd.DataFrame | None,
         rb = pd.concat([by_config_returns[b_key][y]
                         for y in sorted(by_config_returns[b_key])])
         log.info("block bootstrap: %d resamples, block=%d", n_boot, block)
+        bb = block_bootstrap_sharpe_diff(ra, rb, n_boot, block, seed)
         bootstrap = {"a": "miss_fund63", "b": "miss_tech5",
-                     **block_bootstrap_sharpe_diff(ra, rb, n_boot, block, seed)}
+                     "miss_fund63__minus__miss_tech5": bb}
     else:
         log.warning("skipping bootstrap: miss_fund63 or miss_tech5 missing")
 
@@ -388,7 +392,7 @@ def run_evaluation(scores_dir: Path, prices: pd.DataFrame | None,
         },
         # Concatenated daily net-return series per config (for equity curves).
         "equity": {
-            ck: [(str(d.date()), float(v))
+            ck: [(str(pd.Timestamp(d).date()), float(v))
                  for d, v in zip(rs.index, rs.to_numpy(dtype=float))]
             for ck, rs in sorted(cfg_series.items())
         },
@@ -480,12 +484,13 @@ def write_tables_md(res: dict) -> str:
     A("## Robustness")
     A("")
     bb = res["bootstrap_sharpe_diff"]
-    if bb:
+    inner = bb.get("miss_fund63__minus__miss_tech5", {}) if isinstance(bb, dict) else {}
+    if inner:
         A(f"Moving-block bootstrap of Sharpe({bb['a']}) − Sharpe({bb['b']}): "
-          f"{bb['n_boot']} resamples, block {bb['block']}d, {bb['n_days']} days. "
-          f"Mean diff {bb['mean_diff']:.3f} "
-          f"[{bb['ci_2.5']:.3f}, {bb['ci_97.5']:.3f}], "
-          f"P(diff > 0) = {bb['p_diff_gt_0']:.4f}.")
+          f"{inner['n_boot']} resamples, block {inner['block']}d, {inner['n_days']} days. "
+          f"Mean diff {inner['mean_diff']:.3f} "
+          f"[{inner['ci_2.5']:.3f}, {inner['ci_97.5']:.3f}], "
+          f"P(diff > 0) = {inner['p_diff_gt_0']:.4f}.")
     else:
         A("Block bootstrap skipped (miss_fund63 or miss_tech5 missing).")
     A("")
