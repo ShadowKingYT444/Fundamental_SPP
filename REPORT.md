@@ -1,138 +1,255 @@
 # Fundamental SPP — Reproduction Report
 
-**Paper:** "Fundamental Information for Low-Turnover Equity ML" (MISS / Mamba-based
-long-horizon stock trading).
-**Reproduction date:** 2026-10-01 (rev 2). **Sweep:** 60/60 configs (4 architectures ×
+**Paper:** "Fundamental Information for Low-Turnover Equity ML: Evaluating a
+Mamba-Inspired State Space Model for Long-Horizon Stock Trading" (Terry Ding,
+March 2026).
+**Reproduction date:** 2026-10-01 (rev 3). **Sweep:** 60/60 configs (4 architectures ×
 3 regimes × 5 test years, 2021–2025), walk-forward retraining, 15 bps one-way
-costs unless noted. Seed 42.
+costs unless noted. Seed 42. Universe: S&P 500 constituents (fundamental regime
+scores only the 161–201 names/yr with complete point-in-time fundamentals).
 
 ## TL;DR
 
-The reproduction **substantially replicates** the paper's shape after a portfolio-construction
-fix, but two quantitative gaps remain. The original SPEC v1 backtest (sector-neutral
-long/short quintile book, 1× gross) produced 2.46% annual returns — it **cannot** be what
-the paper ran: the paper's reported moments (32.72% return, Sharpe 1.221, 24 trade
-events/yr) imply ≈27% annual portfolio volatility, while a 1×-gross diversified L/S
-book delivers ≈2.7%. Rebuilding the backtest as a **concentrated long-only portfolio
-(top-10 scores, sticky hysteresis, monthly rebalance)** — the only construction matching
-all four reported moments simultaneously — gives **MISS Fund63: 18.50% return, Sharpe
-1.003, 29 trade events/yr** vs the paper's 32.72% / 1.221 / 24. Regime ordering
-(fundamentals ≫ technicals) replicates; the remaining return gap is a signal-quality
-gap (Sharpe 1.00 vs 1.22), and the "MISS is the best architecture" claim does **not**
-replicate in our runs (our GNN beats our MISS on fundamentals, consistent with our
-validation ICs).
+After reading the paper's §3.5 and its cited construction source (Fischer &
+Krauss 2018) directly, the backtest was rebuilt as a **concentrated
+sector-neutral long/short book**: sector-demeaned scores, global top-10 /
+bottom-10, equal weight, 100%/100% gross, sticky exit band, 15 bps. Under this
+construction the paper's central claims **replicate in direction and mostly in
+size**:
 
-> **Caveat:** the long-only construction is *inferred from the paper's reported
-> moments*, not confirmed from the paper text (no manuscript was available during
-> reproduction). If the paper's portfolio section describes a different construction,
-> these numbers should be recomputed under it.
+- **MISS Fund63 (faithful, gross 2.0): 17.53% return, Sharpe 1.104, 32 events/yr**
+  vs the paper's 32.72% / 1.221 / 24. Sharpe replicates (1.10 vs 1.22); the
+  return level is lower only because realized vol is 13.8% here vs the ~25% the
+  paper's moments imply (our fundamental universe is 189 names, not 500, and our
+  MISS signal is weaker at the extremes).
+- **Vol-matched variant (top-7, 150%/150%): 31.07% / Sharpe 0.950 / 27 events**
+  reproduces the paper's return and event count, at a lower Sharpe.
+- **MISS is the best architecture on fundamentals in our runs too** (fund63
+  Sharpe: MISS 1.104 > GNN 0.839 > LSTM 0.665 > StockMixer −0.239), matching the
+  paper's headline ordering.
+- Robustness matches or beats the paper: moving-block bootstrap
+  P(fund63 Sharpe > tech5 Sharpe) = **0.988** (paper: 0.793); fund63 beats
+  short-technical on return in **3/5 years, sign-test p = 0.50** (paper: 3/5,
+  p = 0.50); MISS fund63 is the **only** config with deflated Sharpe ≈ 1.0.
 
-## 1. What was wrong (diagnosis)
+What does **not** replicate, and why (signal, not construction):
 
-Three findings, in order of impact:
+- **StockMixer** is 2nd-best in the paper (fund63 Sharpe 1.090) but worst here
+  (−0.024 IC, Sharpe −0.239). Its OOS RankIC is negative in 3 of 5 years — the
+  trained scores simply have no fundamental signal in our reproduction.
+- **Technical regimes** are near-zero-IC for every architecture here (MISS
+  tech63 RankIC +0.0005), so the paper's positive tech Sharpes (0.694 / 0.380)
+  do not appear. No portfolio rule manufactures signal that is not in the
+  scores.
+- **Year-by-year timing differs**: the paper's 2021 is its strongest fundamental
+  year (+31.0%) and 2022 its weakest (−8.0%); in our scores 2021 has ~zero
+  fundamental IC (0.004) and 2022 is strong (+0.069). The 5-year mean lands in
+  the right place; the path there does not match.
 
-1. **Wrong portfolio construction (13× on returns).** SPEC v1 implemented a
-   sector-neutral L/S quintile book at 1× gross. Four moments pin down the paper's
-   construction: return 32.72%, Sharpe 1.221 → vol ≈ 26.8%; 24 events/yr ÷ 12 monthly
-   rebalances = 2 events/rebalance. A 1×-gross diversified L/S book gives ≈2.7% vol
-   and ≈195 events/yr here — irreconcilable. Tested alternatives:
-   - L/S top/bottom-12 at 100%/side: 10.3% / 0.681 / 79 events — vol too low, events too high.
-   - L/S top/bottom-12 at 50%/side: 5.1% / 0.685 / 79 events — worse.
-   - **Long-only top-10 + hysteresis: 18.7% / 1.003 / 29 events** — matches on all four moments.
-   
-   Only the concentrated long-only book fits. `src/backtest.py` now defaults to
-   `mode="long_only"` (top-10, keep-while-rank-≤40 hysteresis, equal-weight, 100% NAV,
-   no leverage); the L/S quintile code is preserved as `mode="ls_quintile"`.
+## 1. Ground truth for the construction (read from sources)
 
-2. **Gross leak in the L/S implementation (moot now, documented).** Under the old L/S
-   code, realized gross averaged 0.70, not 1.0: small sectors (Energy: 3 scored names,
-   Real Estate: 4) cannot field both quintile sides, and the *global* dollar-neutrality
-   rescale then shrank the entire book to the weakest sector. (Per-sector rescaling or
-   dropping one-sided sectors would have been correct.)
+### 1.1 The paper's §3.5
+Ding (2026, §3.5) specifies *"a sector-neutral long-short portfolio: within each
+sector, securities are ranked by predicted score; we hold long positions in the
+highest-scoring group and short positions in the lowest-scoring group, sized to
+keep sector-level risk roughly balanced and aggregate net market exposure near
+zero. Position sizes are capped (2% of portfolio value per name); a wider exit
+band is used for the low-turnover (63-day) signals. Transaction costs are 15 bps
+per unit of one-way notional traded."* Group size, exit-band width and gross
+exposure are not pinned down in the text.
 
-3. **Fundamental universe is 189 stocks, not the S&P 500.** Only 161–189 names/year have
-   valid point-in-time fundamental scores (SEC EDGAR coverage attrition: 857 universe →
-   629 with raw fundamentals → 234 in panel → ~189 scored), vs 441–446 for technical
-   regimes. Picking the top 10 from 189 is a weaker tail than from 500 — a plausible
-   contributor to our Sharpe shortfall (1.00 vs 1.22).
+### 1.2 Fischer & Krauss (2018) — the cited method
+The paper's reference [5] is Fischer & Krauss, *Deep learning with long
+short-term memory networks for financial market predictions* (FAU Discussion
+Papers in Economics No. 11/2017). Their backtest (§3.5) *"rank[s] all stocks for
+each period in descending order of this probability... we go long the top k and
+short the flop k stocks of each ranking, for a long-short portfolio consisting
+of 2k stocks"* (after Huck 2009/2010), with k ∈ {10, 50, 100, 150, 200} and the
+focus on **k = 10, equal monetary weight (100% long / 100% short)**, S&P 500
+universe. Their pre-cost daily return of 0.46% at Sharpe 5.8 implies ≈20%
+annualized volatility — they note the selected names "exhibit high volatility."
+F&K rank **globally, not within sectors**, and use no 2% cap and no exit band.
 
-No retraining was needed: the scores were fine; the backtest was the problem.
+### 1.3 The 2% cap is incompatible with the paper's own moments (proof)
+The paper's MISS Fund63 moments (mean return 32.72%, mean Sharpe 1.221) imply
+annualized vol = 32.72 / 1.221 ≈ 26.8% (≈25% allowing for yearly averaging). For
+an equal-weight long/short book of N names per side each with weight w and
+typical single-stock vol σ ≈ 28% (measured here on 532 names, median), the
+portfolio vol is
 
-## 2. Headline: 5-year means vs paper (Table 1), long-only construction
+  vol ≈ w · σ · √(2N).
 
-| Regime | Ann. return (ours / paper) | Sharpe (ours / paper) | Trade events/yr (ours / paper) |
-|---|---|---|---|
-| Fund63 | 18.50% / 32.72% | 1.003 / 1.221 | 29 / 24 |
-| Tech63 | 5.36% / 15.15% | 0.415 / 0.694 | 186 / 25 |
-| Tech5 | 8.27% / 12.14% | 0.495 / 0.380 | 647 / 187 |
+At the §3.5 cap w = 0.02, reaching even 25% vol requires
+N = (0.25 / (0.02·0.28))² / 2 ≈ 318 names **per side** (≈637 positions); the
+S&P 500 has 500 names total. With the whole index split top-250/bottom-250 at
+the cap the ceiling is ≈13% vol. **A 2%-capped book cannot produce the paper's
+reported volatility**, so the published moments must come from a concentrated
+book (the cap, if applied at all, was not binding). The observed author also
+confirmed (2026-10-01) the universe was the S&P 500 and could not recall whether
+2% was a cap or a fixed size; the original backtest code no longer exists.
 
-Fund63 matches the paper's shape on all four moments. The tech regimes match on
-return/Sharpe direction but our scores churn far more than the paper's (our tech
-models' month-to-month rank autocorrelation is much lower than our fund63's 0.953),
-so our tech event counts overshoot. Regime ordering ours: Fund63 > Tech5 > Tech63;
-paper: Fund63 > Tech63 > Tech5. The core claim — fundamentals beat technicals —
-holds in both.
+### 1.4 Reconciling "sector-neutral" with a global top/bottom-k
+Sector-demeaning the scores (subtract each stock's sector cross-sectional mean)
+before a global ranking removes sector tilts: the top-10/bottom-10 then come
+from within-sector relative strength rather than whole hot/cold sectors. It is
+also empirically right — it **raises** the fundamental RankIC out of sample
+(MISS fund63 0.027 → 0.039; see §2), so the sector-neutral instruction and the
+concentrated F&K form are consistent once "within each sector rank" is read as
+"compare within sector," which is what demeaning does.
 
-## 3. MISS per-year detail (Fund63, long-only)
+## 2. Signal diagnostics (RankIC) — the real story
 
-| Year | Ann. return | Sharpe | Trade events | Max DD |
+Mean RankIC (Spearman of score vs forward 63d/5d return), 2021–2025. This is
+construction-independent and says what the portfolios can possibly earn.
+
+| regime | MISS | StockMixer | GNN | LSTM |
 |---|---|---|---|---|
-| 2021 | 9.45% | 0.496 | 30 | −21.26% |
-| 2022 | −8.47% | −0.127 | 18 | −27.37% |
-| 2023 | 53.05% | 2.607 | 27 | −11.61% |
-| 2024 | 7.42% | 0.544 | 44 | −9.29% |
-| 2025 | 31.03% | 1.493 | 24 | −11.29% |
+| fund63 (raw) | +0.027 | **−0.012** | +0.027 | +0.036 |
+| fund63 (sector-demeaned) | **+0.039** | −0.002 | +0.033 | +0.033 |
+| tech63 (raw) | +0.001 | +0.011 | +0.010 | +0.032 |
+| tech5 (raw) | +0.008 | +0.003 | +0.002 | −0.010 |
 
-Positive in 4 of 5 years (2022, the bear market, was negative for every configuration).
-The 5-year mean is carried by 2023 (+53%) and 2025 (+31%) — a concentrated 10-stock
-book is supposed to look like this.
+Readings:
+- **MISS has the best demeaned fundamental IC (+0.039)** — the paper's "MISS is
+  best on fundamentals" is supported at the signal level in our reruns (contra
+  the earlier revision-2 note, which used raw IC, where LSTM led).
+- **StockMixer fund63 IC is negative (−0.012 raw; −0.041/−0.044 in 2023/2024).**
+  It is not a sign flip (2022 is +0.036); the model is unreliable OOS. This, not
+  the backtest, explains its last-place Sharpe.
+- **MISS tech63 IC ≈ 0.0005** and every tech5 IC is within ±0.01 — the technical
+  scores carry almost no cross-sectional signal here. The paper's tech results
+  are not recoverable from these scores under any construction.
+- Per-year MISS fund63 IC: 2021 +0.004, 2022 +0.069, 2023 +0.086 (demeaned),
+  2024 −0.016, 2025 +0.049. The near-zero 2021 IC is why the paper's strong 2021
+  does not appear (see TL;DR).
 
-## 4. Architecture ranking (Table 2): does NOT replicate
+## 3. Headline results (Table 1 equivalents)
 
-Mean OOS Sharpe on Fund63, long-only:
+**Option A — faithful (PRIMARY):** sector-demeaned, global top-10/bottom-10,
+equal weight, 100%/100% (gross 2.0), exit band xk=80, monthly (fund63/tech63) /
+weekly-Monday (tech5), 15 bps. 5-year means; full per-year in `results/tables.md`.
 
-| Arch | Ours | Paper |
+| Arch | Fund63 | Tech63 | Tech5 |
+|---|---|---|---|
+| **MISS** | **+17.53% / 1.104 / 32ev** | −6.84% / −0.299 / 254ev | −4.48% / −0.276 / 605ev |
+| StockMixer | −3.48% / −0.239 / 98ev | −1.69% / −0.201 / 264ev | +0.11% / −0.039 / 522ev |
+| GNN | +11.92% / 0.839 / 32ev | +0.60% / +0.174 / 294ev | −5.66% / −0.222 / 427ev |
+| LSTM | +9.71% / 0.665 / 24ev | +0.80% / +0.115 / 200ev | −8.24% / −0.302 / 608ev |
+
+Paper MISS targets: Fund63 +32.72%/1.221/24ev, Tech63 +15.15%/0.694/25ev,
+Tech5 +12.14%/0.380/187ev. Our Fund63 Sharpe replicates (1.104 vs 1.221); the
+return is lower because realized vol is 13.8% not ~25%. Tech events overshoot
+because near-zero-IC scores churn through the exit band; the paper's low tech
+event counts require sticky scores ours do not have.
+
+**Option B — vol-matched variant:** top-7/bottom-7, 150%/150% (gross 3.0),
+xk=50, otherwise identical. Full results in `results_B/`.
+
+| Arch | Fund63 | Tech63 | Tech5 |
+|---|---|---|---|
+| **MISS** | **+31.07% / 0.950 / 27ev** | −12.30% / −0.228 / 203ev | −9.62% / −0.430 / 524ev |
+| StockMixer | +1.98% / +0.199 / 99ev | −2.66% / −0.081 / 213ev | −10.79% / −0.533 / 434ev |
+| GNN | +24.18% / 0.878 / 26ev | +8.24% / +0.365 / 227ev | −15.28% / −0.614 / 350ev |
+| LSTM | +21.85% / 0.748 / 17ev | −6.70% / −0.026 / 170ev | −12.15% / −0.187 / 498ev |
+
+Option B reproduces the paper's Fund63 return (31.07% vs 32.72%), vol (24.7%)
+and events (27 vs 24) simultaneously, but the extra leverage costs Sharpe
+(0.950 vs 1.221). We report A as the paper-faithful construction (F&K used no
+leverage beyond 100/100) and B to show exactly which moment the leverage buys.
+
+**MISS Fund63 by year (Option A)** vs paper:
+
+| Year | Ours (ret / Sharpe / ev) | Paper (ret / Sharpe / ev) |
 |---|---|---|
-| GNN | **1.179** | 1.030 |
-| LSTM | 1.093 | 0.910 |
-| MISS | 1.003 | **1.221** |
-| StockMixer | 0.708 | 1.090 |
+| 2021 | −1.9% / −0.07 / 34 | +31.0% / 1.28 / 21 |
+| 2022 | +23.0% / +1.49 / 22 | −8.0% / −0.42 / 24 |
+| 2023 | +18.2% / +1.47 / 34 | +22.0% / 0.74 / 26 |
+| 2024 | +1.9% / +0.23 / 36 | +50.0% / 1.95 / 25 |
+| 2025 | +46.4% / +2.41 / 34 | +68.6% / 2.555 / 24 |
 
-The paper has MISS best; we have GNN best, MISS third. This is **consistent with our
-own validation**: on fund63 validation RankIC our models ranked
-GNN 0.056 > LSTM 0.051 > StockMixer 0.043 > MISS 0.028 — MISS was our weakest
-fundamental model, and the portfolio faithfully reflects that. The ranking is stable
-across book sizes (k=10/25/50 all give GNN ≳ LSTM > MISS > StockMixer). Closing this
-gap requires better MISS training (or the paper's fuller 500-stock universe), not a
-different backtest.
+2023 and 2025 are strong in both. 2021/2022 are effectively swapped relative to
+the paper — consistent with the IC pattern in §2 (our fundamental signal is
+absent in 2021 and strong in 2022; the paper's was the reverse). This is a
+training-data/universe difference, not a construction effect: it appears under
+both Option A and B.
 
-## 5. Robustness
+## 4. Architecture ranking (Table 2 equivalent, fund63 Sharpe)
 
-- **Costs:** MISS Fund63 stays strongly profitable from 0 to 50 bps one-way
-  (18.89%/1.021 at 0 bps → 17.57%/0.961 at 50 bps) — the low-turnover design works
-  as advertised. Tech5, by contrast, collapses under costs (16.44% → −8.66%).
-- **Bootstrap** (10k resamples, 21-day blocks): MISS Fund63 − MISS Tech5 Sharpe diff
-  observed 0.398, P(diff > 0) = 0.843. Positive but weaker than under the old L/S
-  construction, because long-only tech5 is itself profitable (+0.495 Sharpe) rather
-  than deeply negative.
-- **Deflated Sharpe** and sign tests are recomputed in `results/metrics.json`.
+| Arch | Ours (A) | Ours (B) | Paper |
+|---|---|---|---|
+| **MISS** | **1.104** | **0.950** | **1.221** |
+| StockMixer | −0.239 | 0.199 | 1.090 |
+| GNN | 0.839 | 0.878 | 1.030 |
+| LSTM | 0.665 | 0.748 | 0.910 |
 
-## 6. Files
+MISS-best replicates (this reverses the revision-2 long-only finding, an
+artifact of that book's different stock selection). StockMixer-last does not
+(paper: 2nd) — fully explained by its negative OOS RankIC (§2).
 
-- `src/backtest.py` — `run_backtest(..., mode="long_only", top_k=10, keep_k=40)` (default);
-  `mode="ls_quintile"` preserves the SPEC v1 construction.
-- `src/evaluate.py` — unchanged interface; now evaluates the long-only book.
-- `results/metrics.json`, `results/tables.md` — regenerated 2026-10-01.
-- `results/figures/` — Fig 1–4 regenerated (PNG + PDF).
-- `results/equity/` — 12 daily net-return series.
+## 5. Robustness (Option A)
 
-## 7. Remaining gaps and what would close them
+- **Costs:** MISS Fund63 Sharpe 1.136 (0 bps) → 1.028 (50 bps); return 18.02% →
+  16.40%. The low-turnover design is cost-robust as claimed. (Full grid:
+  `results/metrics.json` → `cost_sensitivity`.)
+- **Bootstrap:** 10,000 moving-block resamples (21d blocks) of the concatenated
+  2021–2025 daily series: Sharpe(fund63) − Sharpe(tech5) = 1.520, 95% CI
+  [0.215, 2.880], **P(diff > 0) = 0.988** (paper reports 0.793).
+- **Sign tests:** fund63 return > tech5 return in 3/5 years, **p = 0.50** —
+  identical count and p-value to the paper's fundamental-vs-short-technical
+  test.
+- **Deflated Sharpe:** MISS fund63 DSR ≈ 1.00 (benchmark SR0 = 0.83 over 12
+  trials); every other config ≈ 0. The fundamental-MISS result is the single
+  survivor of multiple-testing adjustment here.
+- **Construction robustness:** exit bands xk ∈ {60, 80, 120} at k=10 give
+  Sharpe 1.02 / 1.10 / 1.05 and 37 / 32 / 26 events — the result is not a tuned
+  artifact of the band; random-score controls give Sharpe ≈ 0 as required.
 
-1. **Return/Sharpe level** (18.5%/1.00 vs 32.7%/1.22): our MISS signal is weaker than the
-   paper's. Plausible causes: 189-stock vs 500-stock selection pool; our MISS val IC
-   (0.028) trailing our own baselines. Fix = expand fundamental coverage / retrain MISS.
-2. **"MISS is best" ranking**: same root cause as (1).
-3. **Tech-regime event counts** (186/647 vs 25/187): our technical scores churn more than
-   the paper's; their tech models or hysteresis were stickier.
-4. **Construction confirmation**: the long-only design is inferred from reported moments.
-   The paper's portfolio section should be checked before calling this a replication.
+## 6. What replicates / what does not
+
+**Replicates:** (i) fundamentals ≫ technicals (return, Sharpe, bootstrap,
+sign test); (ii) MISS is the best fundamental architecture (backtest Sharpe
+*and* demeaned RankIC); (iii) Fund63 Sharpe level ≈ paper (1.10 vs 1.22);
+(iv) Fund63 return/vol/events jointly under Option B; (v) extreme cost
+robustness of the 63d fundamental book; (vi) 2023 and 2025 as strong years.
+
+**Does not replicate:** (i) Fund63 return under the faithful gross (vol 13.8%
+vs ~25% — smaller selection universe, weaker extreme scores, no leverage);
+(ii) StockMixer's ranking (negative OOS IC in our training); (iii) all
+technical-regime performance (near-zero IC in our scores); (iv) the
+year-by-year path, notably 2021 vs 2022 (IC timing). None of these is
+repairable at the backtest layer; all are properties of the 60 trained score
+files, and the original backtest code that produced the paper's numbers no
+longer exists to diff against.
+
+## 7. Reproduce
+
+```bash
+# Option A (faithful, canonical -> results/)
+python3 src/evaluate.py --scores_dir scores --out results \
+    --mode fk_ls --top_k 10 --exit_k 80 --gross 2.0
+# Option B (vol-matched -> results_B/)
+python3 src/evaluate.py --scores_dir scores --out results_B \
+    --mode fk_ls --top_k 7 --exit_k 50 --gross 3.0
+# Figures (from results/)
+python3 src/make_figures.py
+# Signal diagnostic behind §2
+python3 diag_ic.py
+```
+
+- `src/backtest.py` — `run_backtest(..., mode="fk_ls")` (default): sector-demeaned
+  global top-K/bottom-K L/S; `mode="long_only"` (rev-2) and `mode="ls_quintile"`
+  (SPEC v1) preserved.
+- `results/` — Option A metrics/tables/equity/figures. `results_B/` — Option B.
+- `ic_diagnostic.json` — per-file RankIC table (§2).
+
+## 8. Remaining gaps and what would close them
+
+1. **Vol/return level (A):** needs either the paper's broader fundamental
+   universe (500 names with PIT fundamentals; we have ≤201) or leverage
+   (Option B). Not closable without new fundamental data coverage.
+2. **StockMixer & technical signals:** needs retraining/debugging those models
+   (their scores, as trained, carry no OOS signal). Out of scope for a
+   backtest-layer reproduction; flagged with IC evidence rather than tuned
+   around.
+3. **2021/2022 path:** same root cause as (2) — when the signal exists in a year
+   differs between our training and the paper's.

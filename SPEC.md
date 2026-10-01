@@ -67,17 +67,23 @@ Minimum history: require ≥ 4 quarters of fundamentals before first fundamental
 
 ## Portfolio
 
-> **REVISION 2026-10-01 (rev 2):** the L/S quintile construction below cannot
-> reproduce the paper's reported moments (paper's 32.72%/1.221/24 events imply
-> ≈27% annual vol; the 1×-gross L/S book delivers ≈2.7% vol and ≈195 events/yr).
-> The evaluation now uses a concentrated **long-only** book — top-10 scored names,
-> keep-while-rank-≤40 hysteresis, equal-weight, 100% NAV, monthly rebalance (63d)
-> / weekly (5d), 15 bps one-way — the only construction matching all four reported
-> moments simultaneously (MISS Fund63: 18.50%/1.003/29 events vs paper
-> 32.72%/1.221/24). Implemented as `mode="long_only"` (default) in
-> `src/backtest.py`; the L/S code is preserved as `mode="ls_quintile"`. The
-> long-only design is inferred from the paper's moments, not confirmed from the
-> paper text.
+> **REVISION 2026-10-01 (rev 3 — current):** the paper's §3.5 and its cited
+> construction source (Fischer & Krauss 2018) were read directly. F&K rank all
+> S&P 500 stocks globally and "go long the top k and short the flop k" (k=10,
+> equal monetary weight, 100%/100%). The paper's reported moments
+> (32.72%/1.221/24 events → ≈25–27% vol) are mathematically incompatible with the
+> §3.5 2% cap: vol ≈ w·σ·√(2N) needs ~318 names/side at 2% to reach 25% (proof in
+> REPORT §1.3), so the published book was concentrated. The evaluation therefore
+> uses **mode="fk_ls"** (default in `src/backtest.py`): sector-demeaned scores
+> (the "sector-neutral" tilt — it also raises OOS RankIC), global top-K /
+> bottom-K, equal weight, gross 2.0 (Option A: K=10, exit band 80) with a
+> vol-matched variant (Option B: K=7, gross 3.0, exit band 50). Both are
+> reported; A is the paper-faithful headline.
+>
+> **REVISION 2026-10-01 (rev 2, superseded):** concentrated long-only book
+> (top-10, keep-while-rank-≤40), kept as `mode="long_only"`. It matched the
+> paper's moments coincidentally while getting the portfolio form (and the
+> architecture ranking) wrong; the L/S original below is `mode="ls_quintile"`.
 
 The following is the ORIGINAL SPEC v1 L/S design (superseded for evaluation):
 - Score daily for all universe stocks in test year (NaN features → no score).

@@ -259,7 +259,9 @@ def _jsonable(o):
 
 def run_evaluation(scores_dir: Path, prices: pd.DataFrame | None,
                    costs_bps: float = 15.0, n_boot: int = 10_000,
-                   block: int = 21, seed: int = 42) -> dict:
+                   block: int = 21, seed: int = 42,
+                   bt: dict | None = None) -> dict:
+    bt = bt or {}
     np.random.seed(seed)
     files = sorted(scores_dir.glob("*.csv"))
     if not files:
@@ -276,7 +278,7 @@ def run_evaluation(scores_dir: Path, prices: pd.DataFrame | None,
         log.info("backtesting %s (regime=%s, year=%d, costs=%sbps)",
                  key, regime, year, costs_bps)
         scores = load_scores(f)
-        res = run_backtest(scores, costs_bps=costs_bps, regime=regime, prices=prices)
+        res = run_backtest(scores, costs_bps=costs_bps, regime=regime, prices=prices, **bt)
         m = year_metrics(res)
         per_year[key] = {"model": model, "regime": regime, "year": year, **m}
         by_config.setdefault((model, regime), {})[year] = m
@@ -324,7 +326,7 @@ def run_evaluation(scores_dir: Path, prices: pd.DataFrame | None,
             for year in sorted(years_d):
                 f = scores_dir / f"{model}_{regime}_{year}.csv"
                 res = run_backtest(load_scores(f), costs_bps=cbps,
-                                   regime=regime, prices=prices)
+                                   regime=regime, prices=prices, **bt)
                 m = year_metrics(res)
                 rets_y.append(m["annual_return"])
                 sh_y.append(m["sharpe"])
@@ -389,6 +391,7 @@ def run_evaluation(scores_dir: Path, prices: pd.DataFrame | None,
             "seed": seed, "costs_bps": costs_bps,
             "n_boot": n_boot, "block": block,
             "n_files": len(files),
+            "construction": bt,
         },
         # Concatenated daily net-return series per config (for equity curves).
         "equity": {
@@ -525,6 +528,13 @@ def main(argv=None):
     ap.add_argument("--n_boot", type=int, default=10_000)
     ap.add_argument("--block", type=int, default=21)
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--mode", default="fk_ls",
+                    help="backtest mode: fk_ls | long_only | ls_quintile")
+    ap.add_argument("--top_k", type=int, default=10)
+    ap.add_argument("--exit_k", type=int, default=80)
+    ap.add_argument("--gross", type=float, default=2.0)
+    ap.add_argument("--no_demean", action="store_true",
+                    help="disable sector-demeaning of scores (fk_ls)")
     args = ap.parse_args(argv)
 
     logdir = PROJECT_ROOT / "logs"
@@ -542,8 +552,10 @@ def main(argv=None):
     out.mkdir(parents=True, exist_ok=True)
     prices = pd.read_parquet(args.prices) if args.prices else None
 
+    bt = dict(mode=args.mode, top_k=args.top_k, exit_k=args.exit_k,
+              gross=args.gross, demean=not args.no_demean)
     res = run_evaluation(scores_dir, prices, costs_bps=args.costs,
-                         n_boot=args.n_boot, block=args.block, seed=args.seed)
+                         n_boot=args.n_boot, block=args.block, seed=args.seed, bt=bt)
     (out / "metrics.json").write_text(json.dumps(_jsonable(res), indent=2))
     (out / "tables.md").write_text(write_tables_md(res))
     eq_dir = out / "equity"

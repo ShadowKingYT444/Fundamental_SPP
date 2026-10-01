@@ -1,12 +1,15 @@
 # Fundamental SPP — Paper Reproduction
 
 End-to-end reproduction of **"Fundamental Information for Low-Turnover Equity
-ML"**: Mamba-based MISS plus LSTM / StockMixer / GNN baselines, walk-forward
-backtest 2021–2025 across three feature regimes (Fund63, Tech63, Tech5).
+ML"** (Ding 2026): Mamba-based MISS plus LSTM / StockMixer / GNN baselines,
+walk-forward backtest 2021–2025 across three feature regimes (Fund63, Tech63,
+Tech5).
 
-**Status:** 60/60 sweep configs complete. See [REPORT.md](REPORT.md) for the
-honest verdict — regime ordering and MISS-on-fundamentals replicate; absolute
-return levels and trade-event counts do not.
+**Status:** 60/60 sweep configs complete; backtest rebuilt to the paper's
+sector-neutral long/short construction (revision 3). See [REPORT.md](REPORT.md)
+for the full verdict — the fundamental ranking, MISS-best-on-fundamentals, and
+the Fund63 Sharpe replicate; the technical-regime and StockMixer numbers do
+not, for signal reasons documented with RankIC evidence.
 
 ## Layout
 
@@ -14,31 +17,36 @@ return levels and trade-event counts do not.
 src/                training + evaluation pipeline
   models.py         MISS (selective SSM), LSTM, StockMixer, GNN
   train.py          walk-forward training harness (--model/--regime/--year)
-  backtest.py       portfolio backtest (15 bps one-way default)
+  backtest.py       portfolio backtest: mode="fk_ls" (default, sector-demeaned
+                    concentrated L/S), "long_only" (rev 2), "ls_quintile" (v1)
   evaluate.py       metrics: per-year, 5y means, cost sensitivity,
-                    moving-block bootstrap, sign tests, deflated Sharpe
+                    moving-block bootstrap, sign tests, deflated Sharpe;
+                    --mode/--top_k/--exit_k/--gross/--no_demean select the book
   make_figures.py   paper figures 1–4 (300-DPI PNG + editable PDF)
   plot_style.py     figures4papers house style
+diag_ic.py          RankIC signal diagnostic behind REPORT §2
+ic_diagnostic.json  per-file RankIC table
 colab/
   sweep_gpu.ipynb   the 60-config Colab GPU sweep (resume-capable, Drive-synced)
 data/               prepared panels, prices, universe (not all in git)
-results/
-  metrics.json      full evaluation output (60 configs)
-  tables.md         all tables
-  equity/           12 daily net-return series (arch × regime)
-  figures/          fig1..fig4.{png,pdf}
+results/            Option A (faithful): metrics.json, tables.md, equity/, figures/
+results_B/          Option B (vol-matched variant): metrics.json, tables.md, equity/
 REPORT.md           reproduction report with honest paper comparison
 ```
 
 ## Quickstart
 
 ```bash
-# 1. Evaluate trained score files -> metrics, tables, equity curves
-python3 src/evaluate.py --scores_dir scores --out results
+# Option A — faithful F&K-style book (canonical -> results/)
+python3 src/evaluate.py --scores_dir scores --out results \
+    --mode fk_ls --top_k 10 --exit_k 80 --gross 2.0
 
-# 2. Build the paper figures
-python3 src/make_figures.py        # real figures -> results/figures/
-python3 src/make_figures.py --smoke  # synthetic-data smoke test -> /tmp/fig_smoke
+# Option B — vol-matched variant (-> results_B/)
+python3 src/evaluate.py --scores_dir scores --out results_B \
+    --mode fk_ls --top_k 7 --exit_k 50 --gross 3.0
+
+# Paper figures (from results/)
+python3 src/make_figures.py
 ```
 
 Training one config (needs the data panels + a GPU for MISS):
@@ -53,15 +61,20 @@ config, scores it, syncs checkpoints/scores/results to Drive, and finishes with
 the evaluation + figure cells. Score CSVs (277 MB total) live on Drive, not in
 git — only the compact metrics/tables/figures are committed.
 
-## Key numbers (net of 15 bps, 5y means, long-only top-10 backtest)
+## Key numbers (net of 15 bps, 5y means)
 
-| MISS regime | Return (ours / paper) | Sharpe (ours / paper) | Events/yr (ours / paper) |
+Portfolio construction (REPORT §1): scores are sector-demeaned, then a global
+top-K/bottom-K long/short, equal weight, sticky exit band — the Fischer &
+Krauss (2018) form the paper cites, reconciled with its "sector-neutral"
+wording. The §3.5 "2% cap" is provably incompatible with the paper's own
+reported volatility and was therefore not binding in whatever produced the
+paper's tables (proof in REPORT §1.3).
+
+| MISS Fund63 | Return (ours / paper) | Sharpe (ours / paper) | Events/yr (ours / paper) |
 |---|---|---|---|
-| Fund63 | 18.50% / 32.72% | 1.003 / 1.221 | 29 / 24 |
-| Tech63 | 5.36% / 15.15% | 0.415 / 0.694 | 186 / 25 |
-| Tech5 | 8.27% / 12.14% | 0.495 / 0.380 | 647 / 187 |
+| **Option A** (top-10, 100%/100%) | 17.53% / 32.72% | **1.104 / 1.221** | 32 / 24 |
+| **Option B** (top-7, 150%/150%) | **31.07% / 32.72%** | 0.950 / 1.221 | **27 / 24** |
 
-Portfolio: concentrated long-only (top-10 scores, keep-while-rank-≤40 hysteresis,
-monthly rebalance for 63d regimes / weekly for 5d, 15 bps one-way) — inferred from
-the paper's reported moments; see REPORT.md §1 for the diagnosis. Details and
-caveats: [REPORT.md](REPORT.md).
+Architecture ranking on Fund63 replicates (MISS best in ours and the paper);
+StockMixer does not (negative out-of-sample RankIC here). Details and caveats:
+[REPORT.md](REPORT.md).
