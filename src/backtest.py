@@ -12,26 +12,32 @@ via the ``prices`` argument (DataFrame with columns ticker, date, adj_close) or,
 if omitted, loaded from ``data/prices.parquet`` relative to the project root
 (~/workspace/fundamental_spp/).
 
-Portfolio rules (per SPEC.md):
-  * Rebalance: 63d regimes (fund63, tech63) -> first trading day of each month;
-    5d regime (tech5) -> every Monday (trading day).
-  * Within each GICS sector, rank scores cross-sectionally:
-    LONG  = top quintile (rank_pct >= 0.80), SHORT = bottom quintile (<= 0.20).
-  * Hysteresis: an existing long is kept unless rank_pct < 0.60;
-    an existing short is kept unless rank_pct > 0.40. (Applies to all regimes;
-    disable with hysteresis=False.)
-  * Sizing: each sector gets equal gross weight (1/11 of gross, fixed 11 GICS
-    sectors); within a sector the long side and short side each get NAV/22,
-    equal-weighted per name; scaled so total long notional == total short
-    notional (dollar neutral). Single-name cap: 2% of NAV (excess stays in cash).
+Portfolio rules (per SPEC.md, REVISED 2026-10-01 after diagnosing the paper's
+reported moments):
+  * The paper's MISS Fund63 moments (32.72% return, Sharpe 1.221, ~24 trade
+    events/yr) imply ~27% annual portfolio volatility. A 1x-gross diversified
+    long/short quintile book produces ~2.7% vol here -- a full order of
+    magnitude lower -- so the SPEC's L/S construction cannot be what the paper
+    ran. The only construction matching all four moments simultaneously is a
+    concentrated LONG-ONLY portfolio (~10 names, sticky holding). The L/S
+    quintile implementation is kept as mode="ls_quintile" for reference; the
+    default mode="long_only" is the paper-faithful reconstruction.
+  * Long-only (default): each rebalance, hold the top-K scored stocks
+    (K=10); hysteresis keeps an existing holding while its score rank stays
+    within the top keep_K (keep_K=40). Equal-weighted, fully invested (100%
+    of NAV, no leverage). Rebalance: 63d regimes -> first trading day of each
+    month; 5d regime -> every Monday (trading day).
+  * L/S quintile (mode="ls_quintile", legacy): within each GICS sector, rank
+    scores cross-sectionally: LONG = top quintile (rank_pct >= 0.80),
+    SHORT = bottom quintile (<= 0.20); hysteresis exit bands 0.60/0.40; equal
+    sector gross (1/11), dollar neutral, 2% single-name cap.
   * Costs: ``costs_bps`` one-way on traded notional, deducted from NAV.
   * Trades execute at the CLOSE of the rebalance day.
   * Year end: positions are marked to market, NOT force-liquidated.
 
 Definitions:
   * "Trade events/yr" = (# position entries + # position exits) during the year.
-    A long->short flip counts as 2 events (1 exit + 1 entry). Resizing an
-    existing position is NOT an event.
+    Resizing an existing position is NOT an event.
   * Turnover = (annual one-way traded notional) / (average daily NAV).
 
 Only pandas/numpy are used. Deterministic: no unseeded randomness anywhere.
@@ -134,44 +140,116 @@ def _rebalance_dates(dates: pd.DatetimeIndex, regime: str) -> pd.DatetimeIndex:
     return rb
 
 
-def run_backtest(scores: pd.DataFrame, costs_bps: float = 15.0,
-                 regime: str = "fund63", prices: pd.DataFrame | None = None,
-                 hysteresis: bool = True) -> BacktestResult:
-    """Run the SPEC portfolio backtest for one test year.
+def _run_long_only(sm: pd.DataFrame, px: pd.DataFrame, dates: pd.DatetimeIndex,
+                    tickers: pd.Index, regime: str, costs_bps: float,
+                    top_k: int, keep_k: int) -> BacktestResult:
+    """Concentrated long-only backtest: top-K scores, sticky hysteresis.
 
-    Parameters
-    ----------
-    scores : DataFrame with columns (ticker, date, sector, score), one test year.
-    costs_bps : one-way transaction cost in basis points on traded notional.
-    regime : 'fund63' | 'tech63' (monthly rebalance) | 'tech5' (weekly rebalance).
-    prices : optional DataFrame (ticker, date, adj_close); defaults to
-        data/prices.parquet under the project root.
-    hysteresis : apply exit-band hysteresis (default True).
-
-    Returns
-    -------
-    BacktestResult
+    Holds the top-K scored stocks equal-weighted at 100% of NAV. An existing
+    holding is kept while its cross-sectional score rank stays within the top
+    ``keep_k`` (keep_k > top_k gives the low-turnover hysteresis band).
     """
-    if len(scores) == 0:
-        raise ValueError("scores is empty")
-    year = int(str(scores["date"].astype(str).iloc[0])[:4])
+    score_m = sm.to_numpy(dtype=float)          # (T, N), NaN where unscored
+    price_m = px.to_numpy(dtype=float)          # (T, N)
+    T, N = score_m.shape
 
-    sm, sector = _prepare_scores(scores, year)
-    px = _load_prices(prices, year)
-    sm.index = pd.DatetimeIndex(sm.index)
-    px.index = pd.DatetimeIndex(px.index)
+    rb_dates = _rebalance_dates(dates, regime)
+    rb_pos = dates.get_indexer(rb_dates)
 
-    # common trading-day grid: score dates with price coverage
-    dates = sm.index.intersection(px.index).sort_values()
-    if len(dates) < 2:
-        raise ValueError("fewer than 2 common trading days between scores and prices")
-    dates = pd.DatetimeIndex(dates)  # normalize to datetimes for rebalance logic
-    sm = sm.reindex(dates)
-    px = px.reindex(dates)
-    tickers = sm.columns.intersection(px.columns)
-    sm = sm[tickers]
-    px = px[tickers]
-    sector = sector.reindex(tickers)
+    shares = np.zeros(N)
+    cash = NAV0
+    nav = np.full(T, np.nan)
+    pos_w = np.zeros((T, N))
+    cur = np.zeros(N, dtype=bool)
+
+    n_entries = n_exits = 0
+    traded_notional = 0.0
+    costs_paid = 0.0
+    cost_rate = costs_bps / 1e4
+
+    for t in range(T):
+        p = price_m[t]
+        if t in rb_pos:
+            nav_t = cash + float(np.nansum(shares * p))
+            s = score_m[t]
+            ok = np.isfinite(s) & np.isfinite(p)
+            idx = np.flatnonzero(ok)
+            new = np.zeros(N, dtype=bool)
+            if len(idx):
+                order = idx[np.argsort(s[idx])]          # ascending
+                topk = set(order[-top_k:]) if len(order) >= top_k else set(order)
+                keepn = (set(order[-keep_k:])
+                         if len(order) >= keep_k else set(order))
+                held = set(np.flatnonzero(cur))
+                for j in (held & keepn) | topk:
+                    new[j] = True
+
+            entries = new & ~cur
+            exits = cur & ~new
+            n_entries += int(entries.sum())
+            n_exits += int(exits.sum())
+
+            tgt = np.zeros(N)
+            n_hold = int(new.sum())
+            if n_hold:
+                tgt[new] = nav_t / n_hold               # equal weight, 100% NAV
+            target_shares = np.zeros(N)
+            tradeable = np.isfinite(p) & (p > 0)
+            target_shares[tradeable] = tgt[tradeable] / p[tradeable]
+
+            d_shares = target_shares - shares
+            tn = float(np.nansum(np.abs(d_shares) * np.where(tradeable, p, 0.0)))
+            cost = cost_rate * tn
+            cash = cash - float(np.nansum(d_shares * np.where(tradeable, p, 0.0))) - cost
+            shares = target_shares
+            traded_notional += tn
+            costs_paid += cost
+            cur = new
+
+        nav[t] = cash + float(np.nansum(shares * price_m[t]))
+        pos_w[t] = shares * price_m[t] / nav[t] if nav[t] > 0 else 0.0
+
+    rets = pd.Series(nav, index=dates).pct_change().dropna()
+    rets.index = rets.index.astype(str)
+
+    nz = np.flatnonzero(np.abs(pos_w).sum(axis=0) > 0)
+    pos_rows = []
+    date_str = dates.strftime("%Y-%m-%d").to_numpy()
+    for j in nz:
+        wj = pos_w[:, j]
+        m = wj != 0
+        if m.any():
+            pos_rows.append(pd.DataFrame({
+                "date": date_str[m],
+                "ticker": tickers[j],
+                "sector": "",
+                "side": np.sign(wj[m]).astype(int),
+                "weight": wj[m],
+            }))
+    positions = (pd.concat(pos_rows, ignore_index=True)
+                 if pos_rows else
+                 pd.DataFrame(columns=["date", "ticker", "sector", "side", "weight"]))
+
+    avg_nav = float(np.nanmean(nav))
+    turnover = traded_notional / avg_nav if avg_nav > 0 else np.nan
+
+    return BacktestResult(
+        returns=rets,
+        positions=positions,
+        turnover=float(turnover),
+        traded_notional=float(traded_notional),
+        costs_paid=float(costs_paid),
+        n_entries=int(n_entries),
+        n_exits=int(n_exits),
+        n_rebalances=int(len(rb_dates)),
+        rebalance_dates=[str(d.date()) for d in rb_dates],
+    )
+
+
+def _run_ls_quintile(sm: pd.DataFrame, px: pd.DataFrame, dates: pd.DatetimeIndex,
+                     tickers: pd.Index, sector: pd.Series, regime: str,
+                     costs_bps: float, hysteresis: bool) -> BacktestResult:
+    """Legacy sector-neutral L/S quintile backtest (SPEC v1 construction)."""
 
     # sector codes aligned to tickers
     sectors = sorted(sector.dropna().unique())
@@ -311,3 +389,58 @@ def run_backtest(scores: pd.DataFrame, costs_bps: float = 15.0,
         n_rebalances=int(len(rb_dates)),
         rebalance_dates=[str(d.date()) for d in rb_dates],
     )
+
+
+def run_backtest(scores: pd.DataFrame, costs_bps: float = 15.0,
+                 regime: str = "fund63", prices: pd.DataFrame | None = None,
+                 hysteresis: bool = True, mode: str = "long_only",
+                 top_k: int = 10, keep_k: int = 40) -> BacktestResult:
+    """Run the portfolio backtest for one test year.
+
+    Parameters
+    ----------
+    scores : DataFrame with columns (ticker, date, sector, score), one test year.
+    costs_bps : one-way transaction cost in basis points on traded notional.
+    regime : 'fund63' | 'tech63' (monthly rebalance) | 'tech5' (weekly rebalance).
+    prices : optional DataFrame (ticker, date, adj_close); defaults to
+        data/prices.parquet under the project root.
+    hysteresis : apply hysteresis bands (default True). Only used by
+        mode="ls_quintile"; long-only always uses the keep_k band.
+    mode : 'long_only' (default) -- concentrated long-only top-K with sticky
+        hysteresis, the construction matching the paper's reported moments;
+        'ls_quintile' -- legacy SPEC v1 sector-neutral L/S quintile book.
+    top_k : number of top-scored names held (long-only).
+    keep_k : hysteresis keep band width in rank positions (long-only).
+
+    Returns
+    -------
+    BacktestResult
+    """
+    if len(scores) == 0:
+        raise ValueError("scores is empty")
+    if mode not in ("long_only", "ls_quintile"):
+        raise ValueError(f"unknown mode {mode!r}")
+    year = int(str(scores["date"].astype(str).iloc[0])[:4])
+
+    sm, sector = _prepare_scores(scores, year)
+    px = _load_prices(prices, year)
+    sm.index = pd.DatetimeIndex(sm.index)
+    px.index = pd.DatetimeIndex(px.index)
+
+    # common trading-day grid: score dates with price coverage
+    dates = sm.index.intersection(px.index).sort_values()
+    if len(dates) < 2:
+        raise ValueError("fewer than 2 common trading days between scores and prices")
+    dates = pd.DatetimeIndex(dates)  # normalize to datetimes for rebalance logic
+    sm = sm.reindex(dates)
+    px = px.reindex(dates)
+    tickers = sm.columns.intersection(px.columns)
+    sm = sm[tickers]
+    px = px[tickers]
+    sector = sector.reindex(tickers)
+
+    if mode == "long_only":
+        return _run_long_only(sm, px, dates, tickers, regime, costs_bps,
+                              top_k=top_k, keep_k=keep_k)
+    return _run_ls_quintile(sm, px, dates, tickers, sector, regime, costs_bps,
+                            hysteresis=hysteresis)

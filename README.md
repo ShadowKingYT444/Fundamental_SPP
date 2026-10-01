@@ -53,12 +53,15 @@ config, scores it, syncs checkpoints/scores/results to Drive, and finishes with
 the evaluation + figure cells. Score CSVs (277 MB total) live on Drive, not in
 git — only the compact metrics/tables/figures are committed.
 
-## Key numbers (net of 15 bps, 5y means)
+## Key numbers (net of 15 bps, 5y means, long-only top-10 backtest)
 
 | MISS regime | Return (ours / paper) | Sharpe (ours / paper) | Events/yr (ours / paper) |
 |---|---|---|---|
-| Fund63 | 2.46% / 32.72% | 0.935 / 1.221 | 195 / 24 |
-| Tech63 | −1.58% / 15.15% | −0.310 / 0.694 | 2,255 / 25 |
-| Tech5 | −3.61% / 12.14% | −1.161 / 0.380 | 6,184 / 187 |
+| Fund63 | 18.50% / 32.72% | 1.003 / 1.221 | 29 / 24 |
+| Tech63 | 5.36% / 15.15% | 0.415 / 0.694 | 186 / 25 |
+| Tech5 | 8.27% / 12.14% | 0.495 / 0.380 | 647 / 187 |
 
-Details and caveats: [REPORT.md](REPORT.md).
+Portfolio: concentrated long-only (top-10 scores, keep-while-rank-≤40 hysteresis,
+monthly rebalance for 63d regimes / weekly for 5d, 15 bps one-way) — inferred from
+the paper's reported moments; see REPORT.md §1 for the diagnosis. Details and
+caveats: [REPORT.md](REPORT.md).

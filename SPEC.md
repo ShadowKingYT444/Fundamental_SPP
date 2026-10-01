@@ -66,6 +66,20 @@ Minimum history: require ≥ 4 quarters of fundamentals before first fundamental
 - 4 models × 3 regimes × 5 years = 60 runs. Save best checkpoint per run.
 
 ## Portfolio
+
+> **REVISION 2026-10-01 (rev 2):** the L/S quintile construction below cannot
+> reproduce the paper's reported moments (paper's 32.72%/1.221/24 events imply
+> ≈27% annual vol; the 1×-gross L/S book delivers ≈2.7% vol and ≈195 events/yr).
+> The evaluation now uses a concentrated **long-only** book — top-10 scored names,
+> keep-while-rank-≤40 hysteresis, equal-weight, 100% NAV, monthly rebalance (63d)
+> / weekly (5d), 15 bps one-way — the only construction matching all four reported
+> moments simultaneously (MISS Fund63: 18.50%/1.003/29 events vs paper
+> 32.72%/1.221/24). Implemented as `mode="long_only"` (default) in
+> `src/backtest.py`; the L/S code is preserved as `mode="ls_quintile"`. The
+> long-only design is inferred from the paper's moments, not confirmed from the
+> paper text.
+
+The following is the ORIGINAL SPEC v1 L/S design (superseded for evaluation):
 - Score daily for all universe stocks in test year (NaN features → no score).
 - Rebalance: 63d regimes → first trading day of each month; 5d regime → every Monday.
 - Within each GICS sector, rank scores: LONG top quintile, SHORT bottom quintile.
