@@ -1,0 +1,768 @@
+\documentclass[11pt,twocolumn]{article}
+
+\usepackage[margin=0.75in,columnsep=0.28in]{geometry}
+\usepackage{mathptmx}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{caption}
+\usepackage[hidelinks]{hyperref}
+
+\captionsetup{font=small,labelfont=bf}
+\setlength{\parskip}{2pt plus 1pt}
+
+\title{\bfseries Fundamental Information for Low-Turnover Equity ML:\\
+Evaluating a Mamba-Inspired State Space Model for\\
+Long-Horizon Stock Trading%
+\thanks{Reproduction edition, October 2026. Every empirical result reported
+here is from an independent end-to-end reproduction of this study; the
+training pipeline, backtest code, metrics, and figure sources are available
+at \url{https://github.com/ShadowKingYT444/Fundamental_SPP}. The relationship
+between these results and the values reported previously is discussed in
+Section~5.}}
+
+\author{Terry Ding}
+\date{October 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+Stock price prediction with modern neural networks is a growing field that
+attracts the attention of both investors and scholars, yet most research is
+oriented toward short-term prediction, where models target price movements
+only a few days ahead. This paper departs from that direction: it uses
+fundamental stock data to train a Mamba-Inspired State Space (MISS) model
+that generates a low-turnover, sector-neutral investment strategy. The study
+uses Yahoo Finance OHLCV data, SEC filings, and custom calculated technical
+indicators, and compares MISS against LSTM, StockMixer, and graph neural
+network architectures. Across five out-of-sample years (2021--2025), the
+long-horizon fundamental strategy records a mean annual return of 17.53\%
+and a mean annualized Sharpe ratio of 1.104, with approximately 32
+portfolio trade events per year. The matched long-horizon technical strategy
+records $-6.84\%$ and $-0.299$, while the short-horizon technical strategy
+records $-4.48\%$ and $-0.276$ with approximately 605 trade events per
+year. A 10{,}000-resample moving-block bootstrap assigns probability 0.988
+to a positive Sharpe difference between the fundamental and short-horizon
+technical strategies, and the fundamental strategy is the only one of the
+twelve evaluated configurations whose Deflated Sharpe Ratio remains at
+approximately 1.0 after multiple-testing adjustment. The results indicate
+that fundamental information becomes substantially more useful when the
+prediction horizon matches the slower rate at which company fundamentals
+change, although the effect remains dependent on market regime and model
+architecture.
+
+\medskip
+\noindent\textbf{Keywords:} financial machine learning; fundamental data;
+state space models; Mamba; long-horizon trading; walk-forward validation;
+transaction costs; sector neutrality.
+\end{abstract}
+
+\section{Introduction}
+
+The goal of accurately predicting stock prices has been the core purpose of
+financial machine learning research for decades. This research is valuable
+to investors, as better predictions can help create more robust and
+consistent investment strategies. Neural networks are particularly useful
+for achieving this task, as their ability to capture non-linear trends is
+key for navigating the complex space of stock markets. That is why
+individual researchers along with large asset managers and funds are
+increasingly using Artificial Intelligence (AI) to generate accurate stock
+price signals \cite{fischer2018,gkx2020}. To accurately evaluate stock
+prediction methodologies, it is necessary to analyze each underlying
+variable. Indeed, AI has already transformed the financial sector by
+automating tasks like fraud detection, risk assessment, credit scoring, and
+algorithmic trading. A growing sector of this field is stock price
+prediction (SPP), where models are directly used to predict future stock
+returns or price movements. AI is employed for this task because of its
+ability to recognize patterns in data that humans normally would not be
+able to. For example, Fischer and Krauss demonstrated that deep LSTM
+networks can generate statistically significant daily return signals across
+a universe of S\&P 500 constituents over a long out-of-sample period
+\cite{fischer2018}.
+
+Stock prices are not just related to the company; a variety of factors
+influence prices. Financial machine learning models typically ingest
+fundamental, technical, and sentimental factors. Fundamentally, the
+company's earnings, products, balance sheet, and broader economic
+indicators like interest rates and inflation all affect how inherently
+valuable a company is. On a technical level, market dynamics like supply
+and demand, liquidity, volume, volatility, and a variety of trading
+patterns can move stock prices in the short term. Finally, at a sentiment
+level, news events like wars, political decisions, and government policies
+may affect investor psychology, driving price movement. To evaluate
+investment strategies, metrics like the Sharpe Ratio reveal how stable an
+investor's strategy is by comparing excess return against the volatility
+needed to achieve that return.
+
+Leveraging AI to accurately predict the future value of a stock presents a
+number of challenges that must be overcome. Stock datasets inherently
+contain a large amount of noise that models must learn to filter out while
+retaining useful variables \cite{harvey2016}. The complex nature of how
+stock markets behave means that while a variety of factors affect a stock
+price, those factors can change at any moment. The amount of time-series
+data for an individual stock is also inherently limited, as there are only
+around 250 trading days a year. However, recent research has still shown
+that nonlinear ML models can identify economically useful signals from
+large stock panels \cite{fischer2018,gkx2020}.
+
+Currently, the majority of stock-prediction research has been oriented
+towards short-term price prediction, and many papers still evaluate models
+primarily with statistical prediction metrics instead of deploying their
+signals into simulated portfolios. This makes it difficult to tell whether
+a small improvement in prediction actually becomes a better investment
+strategy after turnover and transaction costs are included
+\cite{fischer2018,demiguel2020}. Thus, we present a novel investment
+framework that leverages SEC fundamental data within a Mamba selective
+state space model to generate low-turnover, sector-neutral signals
+evaluated across five out-of-sample years using walk-forward validation and
+robustness diagnostics. To understand whether the gains come from the data
+or only from the architecture, the same experiment is also conducted with
+long-horizon technical data and short-horizon technical data, and MISS is
+compared against LSTM, StockMixer, and GNN models. To evaluate results, we
+leverage portfolio metrics like annual return, Sharpe ratio, turnover,
+maximum drawdown, transaction-cost sensitivity, block bootstrap testing,
+and the Deflated Sharpe Ratio framework \cite{bailey2014}.
+
+The rest of this paper is organized as follows: Section 2 offers a brief
+literature review of the financial machine learning (ML) field. Section 3
+presents the method proposed. Section 4 showcases the results of the
+experiments. The final section concludes this paper and discusses future
+directions of research.
+
+\section{Literature Review}
+
+Significant progress has been made in the field of financial machine
+learning (ML), transitioning from fundamental feed-forward neural networks
+to complex architectures like the Transformer and State Space Models. This
+review highlights the architectural progress of the field while critiquing
+the current short-term technical bias and the lack of practical portfolio
+application.
+
+\subsection{Deep Learning in Financial Time Series}
+
+Basic approaches using simple feed-forward networks have been replaced with
+complex architectures designed to properly ingest complex time-series
+data. LSTM networks have been a main choice of model due to their capacity
+to retain historical state information through gates that selectively store
+or forget information over time \cite{hochreiter1997}. By mitigating the
+vanishing gradient problem present in standard RNNs, LSTMs can capture
+longer-range temporal dependencies in market data \cite{rumelhart1986}.
+Recently, the Transformer architecture has also been adapted for financial
+time series \cite{vaswani2017}. This model uses the self-attention
+mechanism to simultaneously weigh the relevance of previous steps, unlike
+LSTMs which process data sequentially. This approach allows the model to
+detect relationships between distant observations and between different
+features. However, standard Transformer attention introduces quadratic
+computational cost with sequence length, making it more expensive when a
+large amount of historical context is required.
+
+More recent financial models have started exploring architectures beyond
+LSTMs and Transformers. StockMixer directly mixes information across
+indicators, time, and stocks through lightweight MLP blocks, allowing dense
+technical information to interact without a costly attention layer
+\cite{fan2024}. Graph Neural Networks (GNNs) take a different approach by
+treating stocks as connected entities rather than independent time series.
+Relational stock-prediction models have shown that industry links and
+other relationships between firms can improve cross-sectional ranking
+because information about one company may also contain information about
+connected companies \cite{feng2019,qian2024}. These models provide useful
+comparisons for MISS because they solve different parts of the same
+problem: temporal memory, cross-feature mixing, and cross-stock
+relationships.
+
+\subsection{Short-Term Technical Bias}
+
+The majority of recent literature relies heavily on daily or intraday
+OHLCV (Open-High-Low-Close-Volume) data combined with technical indicators;
+studies often target price movements merely a few days into the future
+\cite{fischer2018}. This short-term technical bias means that even when
+models achieve useful directional accuracy, they can generate high-turnover
+signals that are vulnerable to market microstructure noise and transaction
+costs. Research on portfolio construction has demonstrated that transaction
+costs can materially change which stock characteristics remain useful after
+trading is accounted for \cite{demiguel2020}. Due to these costs, the need
+for a lower-turnover strategy becomes apparent. Research should therefore
+also consider market fundamentals that move prices over longer periods
+rather than only short-lived technical price moves \cite{shiller1981}.
+
+\subsection{Fundamental Data}
+
+Leveraging fundamental data such as SEC filings, earnings, cash flow,
+valuation ratios, and balance-sheet information within neural networks is a
+significantly sparser area of research. Fundamental data is harder for
+models to digest because it is inherently sparse, with many accounting
+variables released quarterly rather than daily, and it is subject to strict
+point-in-time constraints to avoid look-ahead bias. However, integrating
+these economic indicators allows models to capture information that is more
+directly connected to the company itself. Gu, Kelly, and Xiu show that
+machine-learning methods can extract strong nonlinear relationships from
+large panels of firm characteristics, supporting the broader idea that
+accounting and market characteristics contain meaningful cross-sectional
+information \cite{gkx2020}. In practice, any such pipeline must also ensure
+that a filing does not enter the data before it was actually made public;
+SEC EDGAR filing metadata makes this point-in-time alignment possible
+\cite{sec2025}.
+
+\subsection{Mamba-Inspired State Space Models}
+
+The primary innovation of this paper is the application of Selective State
+Space Models (SSMs), specifically the Mamba architecture \cite{gu2023}.
+This newer framework attempts to resolve issues present in both
+Transformers and recurrent models. Mamba's computational cost grows
+linearly with sequence length, as it processes a sequence through recurrent
+state updates instead of computing full pairwise self-attention. More
+importantly for this research, the architecture selectively changes how
+inputs affect the hidden state based on the current input. This creates a
+mechanism that can keep useful information while allowing irrelevant
+information to disappear. In financial data, this is especially useful
+because an earnings or balance-sheet update may stay important for months
+while individual day-to-day price fluctuations may not.
+
+This does not mean that Mamba should automatically outperform every model.
+StockMixer is specifically designed to mix dense market features across
+time and stocks, while GNN models can directly represent relationships
+among firms. For this reason, the experiments compare architectures under
+the same portfolio construction rather than only comparing MISS to an older
+LSTM baseline. The purpose is to test whether selective state-space memory
+is particularly useful for sparse, long-horizon fundamental information
+instead of claiming that one architecture is universally superior.
+
+\subsection{Portfolio Construction vs.\ Point Prediction}
+
+Finally, a critical disconnect exists between model accuracy measured by
+metrics such as Mean Squared Error (MSE) and actual trading profitability.
+A model can achieve a lower prediction error and still lose money if it is
+overfit, trades too frequently, or makes its largest mistakes during highly
+volatile periods. Financial ML is especially vulnerable to this problem
+because testing many models, factors, and hyperparameters can make a
+backtest appear significant by chance \cite{harvey2016}. To address these
+issues, research has shifted towards using portfolio metrics and more
+advanced statistical controls. The Deflated Sharpe Ratio adjusts an
+observed Sharpe ratio for selection bias, non-normal returns, and the
+number of strategies or model configurations that were tested
+\cite{bailey2014}. This paper therefore evaluates the complete portfolio
+rather than judging the model only from prediction error.
+
+\section{Methodology}
+
+\subsection{Data and Feature Construction}
+
+The experiment uses three primary categories of information: market data,
+fundamental data, and custom technical indicators. Daily
+Open-High-Low-Close-Volume data is taken from Yahoo Finance
+\cite{yahoo2026}, while fundamental accounting information is aligned using
+SEC filing data \cite{sec2025}. The fundamental feature set includes
+profitability measures such as return on assets and operating margin,
+growth variables such as revenue and earnings growth, valuation variables
+such as earnings and free-cash-flow yield, balance-sheet variables such as
+leverage and liquidity, and quality variables such as accruals. Technical
+features include multi-period returns, realized volatility,
+moving-average distance, RSI, MACD, ATR, volume surprise, and price-volume
+trend measures.
+
+A major concern with fundamental data is look-ahead bias. A company's
+quarter may end before the market actually has access to the corresponding
+filing. Therefore, fundamental values are only added to the dataset after
+the public filing acceptance date instead of being backfilled to the fiscal
+period end. Features are winsorized using thresholds calculated from the
+training data and standardized cross-sectionally on each date. This
+prevents very large outliers from dominating the model while also avoiding
+the use of statistics from the future.
+
+The universe is the S\&P 500. Because point-in-time fundamental coverage
+is incomplete, the fundamental regime scores between 161 and 201 names per
+year, while the technical regimes score between 441 and 474 names per year.
+This coverage difference is a property of the data, not of the models, and
+it matters for interpreting portfolio-level results (Section 5).
+
+\subsection{Prediction Horizon and Target}
+
+The main hypothesis of this paper is that the usefulness of a feature
+depends on the horizon at which it is evaluated. Fundamental variables
+change slowly, so forcing them to predict the next one or two days may
+create an unnecessary mismatch between the data and the target. The main
+long-horizon task therefore predicts a 63-trading-day forward return,
+which is approximately one quarter. A shorter five-day target is used for
+the technical benchmark.
+
+For stock $i$ on day $t$, the main target is the stock's forward return
+minus the average forward return of other stocks in its sector:
+\begin{equation}
+y^{(63)}_{i,t} = r_{i,t\rightarrow t+63} - \bar{r}_{s(i),t\rightarrow t+63},
+\end{equation}
+where $s(i)$ represents the stock's sector. This makes the task closer to
+selecting better companies within an industry rather than simply predicting
+whether the entire technology or energy sector will rise.
+
+\subsection{Mamba-Inspired Selective State Model}
+
+For each stock, the daily feature vector is projected into a hidden
+representation and passed through stacked selective state-space blocks. At
+a simplified level, the model can be represented as
+\begin{equation}
+h_t = \bar{A}_t h_{t-1} + \bar{B}_t x_t,
+\end{equation}
+\begin{equation}
+z_t = C_t h_t + D x_t,
+\end{equation}
+where $x_t$ is the current input and $h_t$ is the model's running hidden
+state. Unlike a standard state-space model with the same transition at
+every step, Mamba allows important parameters to depend on the current
+input \cite{gu2023}. The practical intuition is that the model can learn
+that some observations should strongly update memory while others should
+mostly be ignored. This is the main reason the architecture is tested on
+sparse fundamental data.
+
+The MISS implementation uses two selective state-space blocks, residual
+projections, normalization, and a final scoring head. The model is kept at
+approximately 0.2 million trainable parameters so that performance gains
+cannot be explained only by giving it substantially more capacity than the
+baselines. Training combines a Huber regression loss with a pairwise
+ranking loss:
+\begin{equation}
+\mathcal{L} = \mathcal{L}_{\mathrm{Huber}}(\hat{y}, y) +
+\lambda\,\mathcal{L}_{\mathrm{rank}}(\hat{y}, y),
+\end{equation}
+with $\lambda = 0.25$. The regression component learns the magnitude of
+future returns while the ranking component more directly teaches the model
+which stocks should be ordered above others in the portfolio.
+
+\subsection{Baseline Models}
+
+Four model types are evaluated using the same targets and portfolio rules.
+LSTM acts as the standard recurrent baseline and tests whether gated
+sequential memory is enough to capture the useful long-term information.
+StockMixer mixes information across indicators, time, and stocks and is
+expected to be particularly competitive when the input is a dense technical
+panel \cite{fan2024}. GNN adds relationships between stocks using sector
+links and rolling return-correlation links, allowing information to
+propagate between connected companies \cite{feng2019,qian2024}. Finally,
+MISS/Mamba uses selective state propagation without an explicit graph.
+Parameter counts and optimization budgets are kept in the same range across
+models.
+
+\subsection{Walk-Forward Training and Portfolio Construction}
+
+A walk-forward design is used so that every reported test year occurs
+strictly after the data used to train the model. The training window
+expands over time, a trailing block is used for validation, and the
+following calendar year is used as the out-of-sample test period. At each
+annual boundary the model is retrained using only information that would
+have been available at that point in time. Model checkpoints are selected
+using validation Rank Information Coefficient (RankIC), which measures
+whether higher model scores correspond to higher future stock returns.
+
+The model output is converted into a sector-neutral long-short portfolio in
+the concentrated form used by Fischer and Krauss \cite{fischer2018}.
+First, scores are demeaned within sector on each date,
+\begin{equation*}
+\tilde{s}_{i,t} = s_{i,t} - \frac{1}{|s(i)|}\sum_{j \in s(i)} s_{j,t},
+\end{equation*}
+so that selection compares companies against their own sector rather than
+betting on whole sectors rising or falling. All stocks are then ranked
+globally by $\tilde{s}$; the portfolio goes long the top $k=10$ names and
+short the bottom $k=10$ names with equal monetary weight (100\% of net
+asset value long and 100\% short, approximately zero net market exposure).
+Long-horizon signals use a wider exit band so that a position does not need
+to be replaced every time its rank changes slightly: a held name is
+retained while its rank stays within the top (bottom) 80 names. This
+directly lowers turnover. The 63-day regimes rebalance monthly and the
+5-day regime weekly. Net returns subtract 15 basis points for each unit of
+one-way notional traded.
+
+\subsection{Evaluation and Robustness}
+
+The primary metrics are annual return, annualized Sharpe ratio, turnover,
+trade events, and drawdown. Because high backtest returns can be misleading
+when many strategies have been tested, the experiment also uses a
+moving-block bootstrap and year-level sign tests. The block bootstrap
+resamples groups of consecutive returns instead of treating every day as
+independent, which better preserves time-series dependence. Transaction
+costs are also varied from 0 to 50 basis points to test whether the
+strategy's advantage survives less favorable execution assumptions.
+Finally, the Deflated Sharpe Ratio framework is used as a guide for
+controlling the effect of repeated model testing \cite{bailey2014}.
+
+\section{Experiment}
+
+\subsection{Fundamental vs.\ Technical Information}
+
+Table 1 reports the five out-of-sample years for the MISS architecture. The
+most important result is not simply that the fundamental model achieves a
+higher average return. It does so while trading far less often. The
+long-horizon fundamental strategy records a mean annual return of 17.53\%
+and a mean Sharpe ratio of 1.104 with approximately 32 portfolio trade
+events per year. The matched long-horizon technical strategy records
+$-6.84\%$ annual return and $-0.299$ Sharpe with 254 events per year,
+while the five-day technical strategy records $-4.48\%$ annual return and
+$-0.276$ Sharpe with approximately 605 trade events per year.
+
+The advantage is not consistent in every year. The fundamental strategy is
+negative in 2021 ($-1.9\%$) before its strongest relative years, and its
+two best absolute years are 2025 (46.4\%) and 2023 (18.2\%). This
+variation is important because it shows that fundamental information is
+not simply a guaranteed source of excess return. Rather, it appears to
+become more valuable when market conditions reward persistent
+company-level information. Across all five years, the fundamental model
+outperforms the short-horizon technical strategy in three years on both
+annual return and Sharpe, and it outperforms the matched long-horizon
+technical strategy in all five years on annual return.
+
+Relative to the matched 63-day technical model, the long-horizon
+fundamental model improves mean annual return by 24.37 percentage points
+and Sharpe by 1.403. Relative to the short-horizon technical strategy, the
+improvement is 22.01 percentage points in annual return and 1.380 in
+Sharpe. Figure 1 also shows that the higher average result is not created
+by a smooth constant gain; performance varies substantially across years,
+with the fundamental curve compounding to a net asset value of 2.13 over
+the five years while both technical curves end below 0.71.
+
+\begin{table*}[t]
+\centering\footnotesize
+\caption{Five-year out-of-sample results for the MISS architecture.
+Returns and Sharpe ratios are net of the baseline 15~bps one-way
+transaction-cost assumption. ``Events'' denotes portfolio trade/rebalance
+events per year.}
+\begin{tabular}{l rrr rrr rrr rrr}
+\toprule
+& \multicolumn{3}{c}{2021} & \multicolumn{3}{c}{2022} &
+  \multicolumn{3}{c}{2023} & \multicolumn{3}{c}{2024} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(lr){8-10}\cmidrule(lr){11-13}
+Strategy & Ret. & SR & Ev. & Ret. & SR & Ev. & Ret. & SR & Ev. &
+  Ret. & SR & Ev. \\
+\midrule
+Fundamental, 63d & $-1.9$ & $-0.07$ & 34 & 23.0 & 1.49 & 22 &
+  18.2 & 1.47 & 34 & 1.9 & 0.23 & 36 \\
+Technical, 63d & $-24.2$ & $-1.53$ & 226 & $-3.5$ & $-0.00$ & 274 &
+  10.6 & 0.77 & 328 & $-15.1$ & $-0.73$ & 162 \\
+Technical, 5d & 12.6 & 0.88 & 514 & $-14.3$ & $-0.80$ & 658 &
+  $-31.8$ & $-2.35$ & 678 & 24.8 & 1.62 & 578 \\
+\bottomrule
+\end{tabular}
+
+\medskip
+\begin{tabular}{l rrr rrr}
+\toprule
+& \multicolumn{3}{c}{2025} & \multicolumn{3}{c}{Five-year mean} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}
+Strategy & Ret. & SR & Ev. & Ret. & SR & Ev. \\
+\midrule
+Fundamental, 63d & 46.4 & 2.41 & 34 & \textbf{17.53} & \textbf{1.104} & 32 \\
+Technical, 63d & $-2.0$ & $-0.00$ & 278 & $-6.84$ & $-0.299$ & 254 \\
+Technical, 5d & $-13.8$ & $-0.73$ & 598 & $-4.48$ & $-0.276$ & 605 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.92\textwidth]{figures/fig1_equity.pdf}
+\caption{Cumulative net asset value of the three MISS information regimes,
+2021--2025 (net of 15~bps one-way costs). The Fundamental 63d strategy
+compounds \$1 to \$2.13, while the Technical 63d and Technical 5d
+strategies end at \$0.67 and \$0.71.}
+\end{figure*}
+
+\subsection{Model Architecture Comparison}
+
+The next experiment tests whether the result comes only from choosing
+Mamba. Table 2 compares MISS against StockMixer, GNN, and LSTM under the
+same three information regimes. MISS performs best on the long-horizon
+fundamental task, where it records Sharpe 1.104 and annual return 17.53\%,
+ahead of GNN (0.839), LSTM (0.665), and StockMixer ($-0.239$). On the
+technical regimes no architecture is reliably profitable in this
+reproduction: GNN (0.174) and LSTM (0.115) are mildly positive on 63-day
+technical information while MISS is negative ($-0.299$), and every
+architecture has a negative mean Sharpe on the five-day task.
+
+This comparison suggests that architecture should be matched to the
+information being processed, but it also shows the limit of that claim.
+Table 3 reports the mean out-of-sample RankIC of each score file, a
+portfolio-independent measure of signal. MISS has the strongest
+sector-demeaned fundamental RankIC (0.039), which is exactly the ranking
+the portfolio in Table 2 produces. StockMixer's fundamental RankIC is
+negative ($-0.012$ raw), so its last-place portfolio result reflects an
+absent signal rather than a poor portfolio rule. Most strikingly, every
+technical RankIC is within $\pm 0.03$ of zero, and MISS's 63-day technical
+RankIC is 0.001: in this reproduction the technical scores carry almost no
+cross-sectional signal for any architecture, which is why the technical
+portfolios in Table 2 hover around or below zero regardless of
+construction. Mamba's selective state updates appear useful when an
+important fundamental observation may need to remain in memory for a long
+period \cite{gu2023}; no comparable advantage is available where the
+underlying signal itself is absent.
+
+\begin{table}[t]
+\centering\small
+\caption{Mean out-of-sample performance by architecture and information
+regime (five-year means, net of 15~bps one-way costs).}
+\begin{tabular}{l rrr}
+\toprule
+\multicolumn{4}{l}{\textit{Sharpe ratio}} \\
+Model & Fund.\ 63d & Tech.\ 63d & Tech.\ 5d \\
+\midrule
+MISS / Mamba & \textbf{1.104} & $-0.299$ & $-0.276$ \\
+StockMixer & $-0.239$ & $-0.201$ & $-0.039$ \\
+GNN & 0.839 & 0.174 & $-0.222$ \\
+LSTM & 0.665 & 0.115 & $-0.302$ \\
+\midrule
+\multicolumn{4}{l}{\textit{Annual return (\%)}} \\
+MISS / Mamba & \textbf{17.53} & $-6.84$ & $-4.48$ \\
+StockMixer & $-3.48$ & $-1.69$ & 0.11 \\
+GNN & 11.92 & 0.60 & $-5.66$ \\
+LSTM & 9.71 & 0.80 & $-8.24$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering\footnotesize
+\setlength{\tabcolsep}{3.2pt}
+\caption{Mean out-of-sample RankIC (Spearman correlation between model
+score and forward return) by architecture and information regime,
+2021--2025. RankIC is measured before any portfolio construction.}
+\begin{tabular}{l rrrr}
+\toprule
+Regime & MISS & StkMixer & GNN & LSTM \\
+\midrule
+Fund.\ 63d (raw) & 0.027 & $-0.012$ & 0.027 & 0.036 \\
+Fund.\ 63d (dem.) & \textbf{0.039} & $-0.002$ & 0.033 & 0.033 \\
+Tech.\ 63d (raw) & 0.001 & 0.011 & 0.010 & 0.032 \\
+Tech.\ 5d (raw) & 0.008 & 0.003 & 0.002 & $-0.010$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.92\textwidth]{figures/fig2_arch_sharpe.pdf}
+\caption{Mean out-of-sample Sharpe ratio across model architectures and
+information regimes (five-year means, net of 15~bps one-way costs). MISS
+leads on Fundamental 63d, and no architecture achieves a positive mean
+Sharpe on Technical 5d.}
+\end{figure*}
+
+\subsection{Turnover and Transaction Costs}
+
+The original motivation for using long-horizon fundamental information is
+not only prediction accuracy but also the ability to generate a strategy
+that trades less frequently. Figure 3 increases one-way transaction costs
+from 0 to 50 basis points. The long-horizon fundamental portfolio turns
+over only about 4.7 times its net asset value per year, against roughly
+63 times for the five-day technical portfolio, and its mean Sharpe
+declines only from 1.136 at zero cost to 1.028 at 50~bps (return 18.02\%
+to 16.40\%). The short-horizon technical strategy, which is only mildly
+positive before costs (Sharpe 0.298 at 0~bps), collapses to $-1.558$ at
+50~bps. As costs increase, the short-horizon strategy loses return much
+faster because its signal requires substantially more trading. This
+supports the central idea of the paper: a model should not be evaluated
+independently from the amount of trading required to use its predictions.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.92\textwidth]{figures/fig3_cost_sensitivity.pdf}
+\caption{Effect of transaction costs on the three MISS strategies
+(five-year means). Left: mean Sharpe versus one-way transaction cost.
+Right: mean annual return versus one-way transaction cost. The dashed
+line marks the 15~bps baseline. The low-turnover Fundamental 63d strategy
+is nearly cost-insensitive, while the high-turnover Technical 5d strategy
+deteriorates rapidly.}
+\end{figure*}
+
+\subsection{Robustness Testing}
+
+The main limitation of a five-year experiment is that five yearly
+observations do not provide enough statistical power for a strong
+significance claim. The fundamental strategy beats the short-horizon
+technical strategy on annual return in three of five years. A one-sided
+exact sign test for three or more wins out of five gives $p = 0.50$.
+Against the matched long-horizon technical strategy, the fundamental
+strategy wins on annual return in all five years, corresponding to
+$p = 0.031$. The first result is not statistically significant by
+conventional thresholds; the second is, although five observations remain
+five observations.
+
+The moving-block bootstrap uses a larger number of shorter return blocks
+while preserving local time dependence. Across 10{,}000 block-bootstrap
+resamples (21-day blocks) of the 2021--2025 daily return series, the
+observed Sharpe difference between the fundamental and short-horizon
+technical strategies is 1.520 (bootstrap mean 1.530, 95\% interval
+$[0.215, 2.880]$), and the probability that the fundamental strategy has a
+positive Sharpe difference over the short-horizon technical strategy is
+0.988 (Figure 4). This provides stronger directional support than the
+five-year sign test, but it still does not prove that the same advantage
+will remain stable in every future market regime.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig4_bootstrap.pdf}
+\caption{Moving-block bootstrap distribution of the Sharpe difference
+between the fundamental and short-horizon technical MISS strategies
+(10{,}000 resamples, 21-day blocks). The observed difference is 1.52 and
+$\Pr(\mathrm{diff} > 0) = 0.988$.}
+\end{figure}
+
+Two further checks harden the result. First, under the Deflated Sharpe
+Ratio framework of Bailey and L\'opez de Prado \cite{bailey2014}, which
+adjusts for the twelve configurations evaluated, the MISS fundamental
+strategy is the only configuration with a Deflated Sharpe Ratio of
+approximately 1.0 (benchmark $\mathrm{SR}_0 = 0.828$); every other
+architecture--regime combination is approximately zero. Second, the result
+is not an artifact of one gross-exposure choice: scaling the same signals
+to a vol-matched book (top-7/bottom-7 at 150\%/150\% gross) produces a
+mean annual return of 31.07\%, a Sharpe of 0.950, 27 trade events per
+year, and realized volatility of 24.7\%, i.e.\ return and volatility scale
+with gross exposure while the Sharpe ratio moves only modestly (0.950
+versus 1.104). The robustness results therefore support a narrower
+conclusion. The data suggests that long-horizon fundamentals add economic
+value in the tested framework, but the magnitude of the effect varies
+materially from year to year. This is also why model architecture and
+portfolio turnover should be evaluated together instead of reporting only
+the highest backtest return.
+
+\section{Conclusion and Discussion}
+
+This paper evaluates whether fundamental information can be more useful
+for stock prediction when the prediction and trading horizon is
+intentionally extended. A Mamba-Inspired Selective State Space model is
+used because its selective memory mechanism is designed to retain
+important information across long sequences while filtering less useful
+observations. Across the five out-of-sample years, the long-horizon
+fundamental MISS strategy records a mean annual return of 17.53\% and a
+Sharpe ratio of 1.104, compared with $-6.84\%$ and $-0.299$ for matched
+long-horizon technical information and $-4.48\%$ and $-0.276$ for the
+five-day technical strategy. At the same time, the fundamental strategy
+requires only about 32 portfolio trade events per year compared with
+approximately 605 for the short-horizon technical strategy, and it is the
+only configuration whose performance survives both a 50~bps cost stress
+and a multiple-testing (Deflated Sharpe) adjustment.
+
+The model comparison also shows that the conclusion is not simply that
+Mamba is better than every other neural-network architecture. MISS
+performs best on the sparse long-horizon fundamental regime, while in
+this reproduction StockMixer does not reproduce its expected strength and
+no architecture extracts a reliable technical signal. This supports a
+more specific interpretation: architecture and information type interact,
+and the interaction is bounded by the signal actually present in the
+scores (Table 3). Mamba's selective state mechanism is most useful when a
+small number of important observations need to remain relevant for a long
+period. GNNs provide another competitive direction (Sharpe 0.839 on the
+fundamental task) because stock prices are not independent and
+relationships between firms can carry predictive information.
+
+There are still several limitations. Sector neutrality removes large
+industry bets, but it does not fully remove exposures to market beta,
+size, value, momentum, or liquidity. Fundamental data also creates
+difficult data-engineering problems because accounting tags vary across
+companies and older filings must be reconstructed exactly as they were
+known at the time. Transaction costs can also differ significantly
+between large liquid stocks and smaller companies. Finally, five
+out-of-sample years are not enough to cover every possible market regime.
+Future research should test a larger historical period, add explicit
+factor regressions, study performance by liquidity and market-cap bucket,
+and isolate how much of MISS's performance comes from selectivity itself
+rather than other architectural choices.
+
+Because this edition reports an independent reproduction, three
+differences from the values circulated with the original study deserve
+explicit statement. First, the fundamental Sharpe ratio is close to the
+1.221 reported previously (1.104 here), but the annual return is lower at
+the faithful, unlevered gross exposure (17.53\% versus 32.72\%) because
+realized portfolio volatility is 13.8\% rather than roughly 25\%: the
+point-in-time fundamental universe contains 161--201 names per year rather
+than the full S\&P 500, so the selected tails are less extreme, and no
+leverage is applied. Scaling gross exposure to match that volatility
+recovers a 31.07\% mean return at a Sharpe of 0.950 (Section 4.4), which
+locates the difference in exposure and universe breadth rather than in the
+signal. Second, the previously reported strength of StockMixer and of the
+technical regimes does not reproduce: the retrained technical scores carry
+near-zero out-of-sample RankIC for every architecture, and StockMixer's
+fundamental RankIC is negative (Table 3), so those portfolio results
+cannot be recovered by any portfolio construction applied to these scores.
+Third, the year-by-year path differs: 2021 is the weakest fundamental
+year here (RankIC approximately zero) rather than the strongest, so
+year-level agreement should not be expected even where five-year means
+are close. These are limitations of the reproduction's data coverage and
+training runs, and they are reported rather than tuned around.
+
+Overall, the results suggest that the largest opportunity may not come
+from continuously making short-term stock models more complicated.
+Instead, matching the frequency of the data, the memory mechanism of the
+model, and the frequency at which the portfolio actually needs to trade
+can produce a more practical investment framework. Fundamental information
+changes slowly, and a model designed to remember useful information for
+longer periods provides a natural way to take advantage of that structure.
+
+\begin{thebibliography}{16}\small
+
+\bibitem{bailey2014} D.~H. Bailey and M.~L\'opez de Prado. The Deflated
+Sharpe Ratio: Correcting for Selection Bias, Backtest Overfitting, and
+Non-Normality. \textit{Journal of Portfolio Management}, 40(5):94--107,
+2014.
+
+\bibitem{demiguel2020} V.~DeMiguel, A.~Mart\'in-Utrera, F.~J. Nogales, and
+R.~Uppal. A Transaction-Cost Perspective on the Multitude of Firm
+Characteristics. \textit{Review of Financial Studies}, 33(5):2180--2222,
+2020. doi:10.1093/rfs/hhz085.
+
+\bibitem{fan2024} J.~Fan and Y.~Shen. StockMixer: A Simple Yet Strong
+MLP-Based Architecture for Stock Price Forecasting. In \textit{Proceedings
+of AAAI}, 38(8):8389--8397, 2024. doi:10.1609/aaai.v38i8.28681.
+
+\bibitem{feng2019} F.~Feng, X.~He, X.~Wang, C.~Luo, Y.~Liu, and T.-S.
+Chua. Temporal Relational Ranking for Stock Prediction. \textit{ACM
+Transactions on Information Systems}, 37(2), 2019.
+doi:10.1145/3309547.
+
+\bibitem{fischer2018} T.~Fischer and C.~Krauss. Deep Learning with Long
+Short-Term Memory Networks for Financial Market Predictions.
+\textit{European Journal of Operational Research}, 270(2):654--669, 2018.
+doi:10.1016/j.ejor.2017.11.054.
+
+\bibitem{gu2023} A.~Gu and T.~Dao. Mamba: Linear-Time Sequence Modeling
+with Selective State Spaces. arXiv:2312.00752, 2023.
+
+\bibitem{gkx2020} S.~Gu, B.~Kelly, and D.~Xiu. Empirical Asset Pricing via
+Machine Learning. \textit{Review of Financial Studies},
+33(5):2223--2273, 2020. doi:10.1093/rfs/hhaa009.
+
+\bibitem{harvey2016} C.~R. Harvey, Y.~Liu, and H.~Zhu. \ldots and the
+Cross-Section of Expected Returns. \textit{Review of Financial Studies},
+29(1):5--68, 2016. doi:10.1093/rfs/hhv059.
+
+\bibitem{hochreiter1997} S.~Hochreiter and J.~Schmidhuber. Long Short-Term
+Memory. \textit{Neural Computation}, 9(8):1735--1780, 1997.
+doi:10.1162/neco.1997.9.8.1735.
+
+\bibitem{lopez2018} M.~L\'opez de Prado. \textit{Advances in Financial
+Machine Learning}. John Wiley \& Sons, 2018.
+
+\bibitem{qian2024} H.~Qian et al. MDGNN: Multi-Relational Dynamic Graph
+Neural Network for Comprehensive and Dynamic Stock Investment Prediction.
+In \textit{Proceedings of AAAI}, 38(13), 2024.
+doi:10.1609/aaai.v38i13.29381.
+
+\bibitem{rumelhart1986} D.~E. Rumelhart, G.~E. Hinton, and R.~J. Williams.
+Learning Representations by Back-Propagating Errors. \textit{Nature},
+323:533--536, 1986.
+
+\bibitem{sec2025} U.S. Securities and Exchange Commission. EDGAR
+Application Programming Interfaces (APIs): Submissions and XBRL Data.
+SEC.gov, updated 2025.
+
+\bibitem{shiller1981} R.~J. Shiller. Do Stock Prices Move Too Much to Be
+Justified by Subsequent Dividends? \textit{American Economic Review},
+71(3):421--436, 1981.
+
+\bibitem{vaswani2017} A.~Vaswani et al. Attention Is All You Need. In
+\textit{Advances in Neural Information Processing Systems}, 30, 2017.
+
+\bibitem{yahoo2026} Yahoo Finance. Historical market data and price
+history. Accessed 2026.
+
+\end{thebibliography}
+
+\end{document}

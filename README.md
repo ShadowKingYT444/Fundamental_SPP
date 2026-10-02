@@ -31,6 +31,8 @@ colab/
 data/               prepared panels, prices, universe (not all in git)
 results/            Option A (faithful): metrics.json, tables.md, equity/, figures/
 results_B/          Option B (vol-matched variant): metrics.json, tables.md, equity/
+paper/              LaTeX reproduction edition (main.tex) + rendered main.pdf,
+                    Figures 1-4 in paper/figures/
 REPORT.md           reproduction report with honest paper comparison
 ```
 
