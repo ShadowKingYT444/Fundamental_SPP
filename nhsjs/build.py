@@ -7,6 +7,10 @@ Produces from one content definition:
      figures embedded)
 Reference strings follow the NHSJS reference format; the bibliography is
 ordered by first appearance in the text.
+
+Body prose follows the author's own paper (Terry Ding, "Fundamental
+Information for Low-Turnover Equity ML", Oct 2026) as closely as possible:
+sections reuse the author's sentences with the reproduced numbers.
 """
 import re, os, sys
 
@@ -14,8 +18,6 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 FIGDIR = os.path.join(HERE, "figures")
 
 # ---------------------------------------------------------------- references
-# NHSJS format: initials + surname. Title in sentence case. Journal. Vol. X,
-# pg. Y-Z, Year, DOI.  (keys double as \cite labels)
 REFS = {
  "fischer2018": "T. Fischer, C. Krauss. Deep learning with long short-term memory networks for financial market predictions. European Journal of Operational Research. Vol. 270, pg. 654-669, 2018, https://doi.org/10.1016/j.ejor.2017.11.054.",
  "gkx2020": "S. Gu, B. Kelly, D. Xiu. Empirical asset pricing via machine learning. Review of Financial Studies. Vol. 33, pg. 2223-2273, 2020, https://doi.org/10.1093/rfs/hhaa009.",
@@ -34,7 +36,6 @@ REFS = {
  "qian2024": "H. Qian, et al. MDGNN: multi-relational dynamic graph neural network for comprehensive and dynamic stock investment prediction. Proceedings of AAAI. Vol. 38, 2024, https://doi.org/10.1609/aaai.v38i13.29381.",
  "vaswani2017": "A. Vaswani, et al. Attention is all you need. Advances in Neural Information Processing Systems. Vol. 30, 2017.",
 }
-# docx versions: strip LaTeX markup from the ref strings
 def ref_docx(k):
     s = REFS[k]
     s = s.replace("\\textit{", "").replace("\\&", "&")
@@ -46,14 +47,14 @@ TITLE = "Fundamental Information for Low-Turnover Equity ML"
 # ------------------------------------------------------------------ content
 # Paragraphs are lists of segments: ("t", text) or ("b", bold_text).
 # Citations: [[key]] or [[k1,k2]] placed immediately before punctuation.
-# Blocks: ("p", segs) | ("eq", latex) | ("table1",) | ("table2",) |
-#         ("table3",) | ("fig", name, caption)
+# Blocks: ("p", segs) | ("sub", title) | ("eq", latex) | ("eq*", latex) |
+#         ("table1",) | ("table2",) | ("table3",) | ("fig", name, caption)
 
 ABSTRACT = [
  ("b", "Background/Objective. "),
  ("t", "Most stock-prediction research targets price moves a few days ahead and evaluates models on prediction metrics, leaving open whether accuracy gains survive turnover and transaction costs as portfolios. This study asks whether slow-moving fundamental data, traded by a long-memory model as a low-turnover strategy, beats technical signals. "),
  ("b", "Methods. "),
- ("t", "A Mamba-inspired selective state space (MISS) model was trained on point-in-time SEC fundamental features (profitability, growth, valuation, balance-sheet strength) to predict 63-day sector-neutral forward returns for S&P 500 stocks. LSTM, StockMixer, and graph neural network baselines, plus matched 63-day and 5-day technical regimes under identical rules. Walk-forward retraining covered test years 2021--2025; scores were traded as a sector-demeaned top-10/bottom-10 long-short book at 15 bps one-way cost and scored on return, Sharpe ratio, turnover, cost sensitivity, a block bootstrap, and the Deflated Sharpe Ratio. "),
+ ("t", "A Mamba-inspired selective state space (MISS) model was trained on point-in-time SEC fundamental features (profitability, growth, valuation, balance-sheet strength) to predict 63-day sector-neutral forward returns for S&P 500 stocks. LSTM, StockMixer, and graph neural network baselines, plus matched 63-day and 5-day technical regimes, ran under identical rules. Walk-forward retraining covered test years 2021--2025; scores were traded as a sector-demeaned top-10/bottom-10 long-short book at 15 bps one-way cost and scored on return, Sharpe ratio, turnover, cost sensitivity, a block bootstrap, and the Deflated Sharpe Ratio. "),
  ("b", "Results. "),
  ("t", "The fundamental strategy returned 17.53\\% per year at Sharpe 1.104 with about 32 trade events per year, against $-6.84\\%$ ($-0.299$) for matched long-horizon technicals and $-4.48\\%$ ($-0.276$, 605 events) for 5-day technicals. The block bootstrap gave $\\Pr(\\mathrm{Sharpe~gap} > 0) = 0.988$; the fundamental strategy was the only one of twelve configurations with Deflated Sharpe near 1.0, and MISS led every architecture on fundamentals. "),
  ("b", "Conclusions. "),
@@ -63,69 +64,68 @@ ABSTRACT = [
 ]
 
 INTRO = [
- ("p", [("b", "Background and Context. "),
-  ("t", "Stock price prediction is a core problem in financial machine learning, and neural networks are widely used for it because they fit nonlinear market structure[[fischer2018,gkx2020]]. Prices move on fundamentals, technicals, and sentiment: earnings and balance sheets set value, order flow and volatility move prices in the short run, and news shocks move investor psychology. The Sharpe ratio is the natural score for a strategy, since it prices the volatility a return costs. Financial data is noisy, nonstationary, and short---about 250 trading days a year per stock---yet nonlinear models have found useful signals in large panels[[fischer2018,gkx2020]], and algorithmic trading already relies on such models[[lopez2018]].")]),
- ("p", [("b", "Problem Statement and Rationale. "),
-  ("t", "Most published models aim a few days out and are scored on prediction metrics, which says little about whether a small accuracy gain survives turnover and transaction costs once it becomes a portfolio[[fischer2018,demiguel2020]]. A model can also have lower prediction error and still lose money if it trades too much or fails in volatile stretches, and testing many variants can fake significance[[harvey2016]]. Research needs strategies evaluated as portfolios, not just predictions.")]),
- ("p", [("b", "Significance and Purpose. "),
-  ("t", "This study tests a different combination: slow-moving fundamental data, a Mamba selective state space model whose input-dependent memory keeps important observations for months while letting noise fade[[gu2023]], and a sector-neutral portfolio designed to trade rarely. If the data's frequency, the model's memory, and the portfolio's trading frequency are matched, the result should be a more practical investment framework than a fancier short-term model.")]),
- ("p", [("b", "Objectives. "),
-  ("t", "The objectives are (1) to test whether long-horizon fundamental signals beat matched long-horizon and short-horizon technical signals as portfolios; (2) to compare MISS against LSTM, StockMixer, and GNN architectures under identical rules; and (3) to verify robustness to transaction costs, sampling variation, and multiple testing.")]),
- ("p", [("b", "Scope and Limitations. "),
-  ("t", "The study covers S&P 500 stocks over out-of-sample years 2021--2025. Point-in-time fundamental coverage is incomplete (161--201 scored names per year versus 441--474 for technicals), five years cannot cover every market regime, and sector neutrality removes industry bets but not factor exposures.")]),
- ("p", [("b", "Theoretical Framework. "),
-  ("t", "The guiding idea is horizon matching: a feature's value depends on the horizon at which it is evaluated, so slow fundamentals should predict quarterly-scale returns, and the model's memory should run on the same slow clock[[shiller1981]].")]),
- ("p", [("b", "Methodology Overview. "),
-  ("t", "Models are retrained yearly on expanding windows, scored daily, and traded as a concentrated long-short book; performance is reported as five-year means with bootstrap, sign-test, cost-sensitivity, and Deflated Sharpe diagnostics[[bailey2014]].")]),
+ ("p", [("t", "The goal of accurately predicting stock prices has been the core purpose of financial machine learning research for decades. This research is valuable to investors, as better predictions can help create more robust and consistent investment strategies. Neural networks are particularly useful for achieving this task, as their ability to capture non-linear trends is key for navigating the complex space of stock markets. That is why individual researchers along with large asset managers and funds are increasingly using Artificial Intelligence (AI) to generate accurate stock price signals [[fischer2018,gkx2020]]. To accurately evaluate stock prediction methodologies, it is necessary to analyze each underlying variable. Indeed, AI has already transformed the financial sector by automating tasks like fraud detection, risk assessment, credit scoring, and algorithmic trading [[lopez2018]]. A growing sector of this field is stock price prediction (SPP), where models are directly used to predict future stock returns or price movements. AI is employed for this task because of its ability to recognize patterns in data that humans normally would not be able to. For example, Fischer and Krauss demonstrated that deep LSTM networks can generate statistically significant daily return signals across a universe of S&P 500 constituents over a long out-of-sample period [[fischer2018]].")]),
+ ("p", [("t", "Stock prices are not just related to the company; a variety of factors influence prices. Financial machine learning models typically ingest fundamental, technical, and sentimental factors. Fundamentally, the company's earnings, products, balance sheet, and broader economic indicators like interest rates and inflation all affect how inherently valuable a company is. On a technical level, market dynamics like supply and demand, liquidity, volume, volatility, and a variety of trading patterns can move stock prices in the short term. Finally, at a sentiment level, news events like wars, political decisions, and government policies may affect investor psychology, driving price movement. To evaluate investment strategies, metrics like the Sharpe Ratio reveal how stable an investor's strategy is by comparing excess return against the volatility needed to achieve that return.")]),
+ ("p", [("t", "Leveraging AI to accurately predict the future value of a stock presents a number of challenges that must be overcome. Stock datasets inherently contain a large amount of noise that models must learn to filter out while retaining useful variables [[harvey2016]]. The complex nature of how stock markets behave means that while a variety of factors affect a stock price, those factors can change at any moment. The amount of time-series data for an individual stock is also inherently limited, as there are only around 250 trading days a year. However, recent research has still shown that nonlinear ML models can identify economically useful signals from large stock panels [[fischer2018,gkx2020]].")]),
+ ("p", [("t", "Currently, the majority of stock-prediction research has been oriented towards short-term price prediction, and many papers still evaluate models primarily with statistical prediction metrics instead of deploying their signals into simulated portfolios. This makes it difficult to tell whether a small improvement in prediction actually becomes a better investment strategy after turnover and transaction costs are included [[fischer2018,demiguel2020]]. Thus, we present a novel investment framework that leverages SEC fundamental data within a Mamba selective state space model to generate low-turnover, sector-neutral signals evaluated across five out-of-sample years using walk-forward validation and robustness diagnostics. To understand whether the gains come from the data or only from the architecture, the same experiment is also conducted with long-horizon technical data and short-horizon technical data, and MISS is compared against LSTM, StockMixer, and GNN models. To evaluate results, we leverage portfolio metrics like annual return, Sharpe ratio, turnover, maximum drawdown, transaction-cost sensitivity, block bootstrap testing, and the Deflated Sharpe Ratio framework [[bailey2014]].")]),
 ]
 
 METHODS = [
- ("p", [("b", "Research Design. "),
-  ("t", "Walk-forward design. For each test year 2021--2025, the model trains on an expanding window ending two years prior, validates on the intervening year (checkpoints picked by validation RankIC), and tests on the target year, retrained at each annual boundary using only information available at that point.")]),
- ("p", [("b", "Sample. "),
-  ("t", "S&P 500 constituents. The fundamental regime scores 161--201 names per year, limited by point-in-time SEC filing coverage; the technical regimes score 441--474 names per year.")]),
- ("p", [("b", "Data Collection. "),
-  ("t", "Daily open-high-low-close-volume data come from Yahoo Finance[[yahoo2026]]. Fundamental accounting features (return on assets, operating margin, revenue and earnings growth, earnings and free-cash-flow yield, leverage, liquidity, accruals) are built from SEC EDGAR filings[[sec2025]] and enter only after each filing's acceptance date, never backfilled. Technical features (multi-period returns, realized volatility, moving-average distance, RSI, MACD, ATR, volume surprise, price-volume trend) are computed from prices and volume. Features are winsorized on training-data thresholds and cross-sectionally standardized per date.")]),
- ("p", [("b", "Models. "),
-  ("t", "Four model types of about 0.2M parameters each see the same targets and portfolio rules: MISS (two selective state-space blocks plus a scoring head, trained with a Huber regression loss plus a pairwise ranking loss), LSTM[[hochreiter1997,rumelhart1986]], StockMixer (MLP mixing across indicators, time, and stocks)[[fan2024]], and GNN (message passing over sector and rolling return-correlation edges)[[feng2019,qian2024]]. A Transformer was not used as a baseline because its quadratic attention cost is impractical for the 252-day input sequences here[[vaswani2017]].")]),
- ("p", [("b", "Variables and Measurements. "),
-  ("t", "The primary target is the 63-trading-day forward return minus the stock's sector mean return (sector-neutral stock selection); the technical benchmark uses a 5-day target. Model output is a daily score per stock. Portfolio outcomes are measured as annualized return, annualized Sharpe ratio ($\\times\\sqrt{252}$, risk-free zero), annual one-way turnover (traded notional divided by NAV), trade events per year (position entries plus exits), and maximum drawdown.")]),
- ("p", [("b", "Procedure. "),
-  ("t", "Each date, scores are demeaned within sector and ranked globally, following the concentrated long-short form of Fischer and Krauss[[fischer2018]]: long the top 10 names, short the bottom 10, equal weight, 100\\% long / 100\\% short, approximately zero net market exposure. A held name is retained while its rank stays inside the top (bottom) 80, which lowers turnover. The 63-day books rebalance monthly and the 5-day book weekly; 15 basis points are charged per unit of one-way notional traded.")]),
- ("p", [("b", "Data Analysis. "),
-  ("t", "Metrics are computed per test year and averaged over the five years. Costs are swept from 0 to 50 basis points one-way. A 10,000-resample moving-block bootstrap (21-day blocks) estimates the distribution of the Sharpe difference between the fundamental and short-horizon technical strategies. Year-level one-sided exact sign tests compare yearly wins. The Deflated Sharpe Ratio[[bailey2014]] adjusts the best Sharpe for the twelve configurations tested.")]),
- ("p", [("b", "Ethical Considerations. "),
-  ("t", "No human participants, surveys, or personal data are involved. All inputs are public market data and regulatory filings; no informed consent or confidentiality procedures apply.")]),
+ ("sub", "Data and Feature Construction"),
+ ("p", [("t", "The experiment uses three primary categories of information: market data, fundamental data, and custom technical indicators. Daily Open-High-Low-Close-Volume data is taken from Yahoo Finance [[yahoo2026]], while fundamental accounting information is aligned using SEC filing data [[sec2025]]. The fundamental feature set includes profitability measures such as return on assets and operating margin, growth variables such as revenue and earnings growth, valuation variables such as earnings and free-cash-flow yield, balance-sheet variables such as leverage and liquidity, and quality variables such as accruals. Technical features include multi-period returns, realized volatility, moving-average distance, RSI, MACD, ATR, volume surprise, and price-volume trend measures.")]),
+ ("p", [("t", "A major concern with fundamental data is look-ahead bias. A company's quarter may end before the market actually has access to the corresponding filing. Therefore, fundamental values are only added to the dataset after the public filing acceptance date instead of being backfilled to the fiscal period end. Features are winsorized using thresholds calculated from the training data and standardized cross-sectionally on each date. This prevents very large outliers from dominating the model while also avoiding the use of statistics from the future.")]),
+ ("p", [("t", "The universe is the S&P 500. Because point-in-time fundamental coverage is incomplete, the fundamental regime scores 161--201 names per year against 441--474 for the technical regimes. That coverage gap matters for the portfolio results (see Discussion).")]),
+ ("sub", "Target and Horizon"),
+ ("p", [("t", "The main hypothesis of this paper is that the usefulness of a feature depends on the horizon at which it is evaluated. Fundamental variables change slowly, so forcing them to predict the next one or two days may create an unnecessary mismatch between the data and the target. The main long-horizon task therefore predicts a 63-trading-day forward return, which is approximately one quarter. A shorter five-day target is used for the technical benchmark. This follows the argument that research should consider market fundamentals that move prices over longer periods rather than only short-lived technical price moves [[shiller1981]]. For stock i on day t, the main target is the stock's forward return minus the average forward return of other stocks in its sector:")]),
+ ("eq", "y_{i,t}^{(63)} = r_{i,t\\rightarrow t+63} - \\bar{r}_{s(i),t\\rightarrow t+63},"),
+ ("p", [("t", "where s(i) represents the stock's sector. This makes the task closer to selecting better companies within an industry rather than simply predicting whether the entire technology or energy sector will rise.")]),
+ ("sub", "Mamba-Inspired Selective State Model"),
+ ("p", [("t", "For each stock, the daily feature vector is projected into a hidden representation and passed through stacked selective state-space blocks. At a simplified level, the model can be represented as")]),
+ ("eq", "h_t = \\bar{A}_t h_{t-1} + \\bar{B}_t x_t,"),
+ ("eq", "z_t = C_t h_t + D x_t,"),
+ ("p", [("t", "where $x_t$ is the current input and $h_t$ is the model's running hidden state. Unlike a standard state-space model with the same transition at every step, Mamba allows important parameters to depend on the current input [[gu2023]]. The practical intuition is that the model can learn that some observations should strongly update memory while others should mostly be ignored. This is the main reason the architecture is tested on sparse fundamental data.")]),
+ ("p", [("t", "The MISS implementation uses two selective state-space blocks, residual projections, normalization, and a final scoring head. The model is kept at approximately 0.2 million trainable parameters so that performance gains cannot be explained only by giving it substantially more capacity than the baselines. Training combines a Huber regression loss with a pairwise ranking loss:")]),
+ ("eq", "L = L_{\\mathrm{Huber}}(\\hat{y}, y) + \\lambda L_{\\mathrm{rank}}(\\hat{y}, y),"),
+ ("p", [("t", "with $\\lambda = 0.25$. The regression component learns the magnitude of future returns while the ranking component more directly teaches the model which stocks should be ordered above others in the portfolio.")]),
+ ("sub", "Baseline Models"),
+ ("p", [("t", "Four model types are evaluated using the same targets and portfolio rules. LSTM acts as the standard recurrent baseline and tests whether gated sequential memory is enough to capture the useful long-term information; its gates retain historical state while mitigating the vanishing-gradient problem of plain recurrent networks [[hochreiter1997,rumelhart1986]]. StockMixer mixes information across indicators, time, and stocks and is expected to be particularly competitive when the input is a dense technical panel [[fan2024]]. GNN adds relationships between stocks using sector links and rolling return-correlation links, allowing information to propagate between connected companies [[feng2019,qian2024]]. Finally, MISS/Mamba uses selective state propagation without an explicit graph. Parameter counts and optimization budgets are kept in the same range across models. A Transformer baseline was not used because its quadratic attention cost is impractical for the 252-day input sequences here [[vaswani2017]].")]),
+ ("sub", "Walk-Forward Training and Portfolio Construction"),
+ ("p", [("t", "A walk-forward design is used so that every reported test year occurs strictly after the data used to train the model. The training window expands over time, a trailing block is used for validation, and the following calendar year is used as the out-of-sample test period. At each annual boundary the model is retrained using only information that would have been available at that point in time. Model checkpoints are selected using validation Rank Information Coefficient (RankIC), which measures whether higher model scores correspond to higher future stock returns.")]),
+ ("p", [("t", "The model output is converted into a sector-neutral long-short portfolio in the concentrated form used by Fischer and Krauss [[fischer2018]]. First, scores are demeaned within sector on each date,")]),
+ ("eq*", "\\tilde{s}_{i,t} = s_{i,t} - \\frac{1}{|s(i)|}\\sum_{j\\in s(i)} s_{j,t},"),
+ ("p", [("t", "so that selection compares companies against their own sector rather than betting on whole sectors rising or falling. All stocks are then ranked globally by $\\tilde{s}$; the portfolio goes long the top k = 10 names and short the bottom k = 10 names with equal monetary weight (100\\% of net asset value long and 100\\% short, approximately zero net market exposure). Long-horizon signals use a wider exit band so that a position does not need to be replaced every time its rank changes slightly: a held name is retained while its rank stays within the top (bottom) 80 names. This directly lowers turnover. The 63-day regimes rebalance monthly and the 5-day regime weekly. Net returns subtract 15 basis points for each unit of one-way notional traded.")]),
+ ("sub", "Evaluation and Robustness"),
+ ("p", [("t", "The primary metrics are annual return, annualized Sharpe ratio, turnover, trade events, and drawdown. Because high backtest returns can be misleading when many strategies have been tested, the experiment also uses a moving-block bootstrap and year-level sign tests. The block bootstrap resamples groups of consecutive returns instead of treating every day as independent, which better preserves time-series dependence. Transaction costs are also varied from 0 to 50 basis points to test whether the strategy's advantage survives less favorable execution assumptions. Finally, the Deflated Sharpe Ratio framework is used as a guide for controlling the effect of repeated model testing [[bailey2014]].")]),
+ ("p", [("t", "The study uses only public market data and regulatory filings; no human participants or personal data are involved.")]),
 ]
 
 RESULTS = [
- ("p", [("t", "Table 1 reports the five out-of-sample years for MISS. The fundamental strategy returns 17.53\\% per year at Sharpe 1.104 with about 32 trade events per year. The matched 63-day technical strategy returns $-6.84\\%$ (Sharpe $-0.299$) with 254 events; the 5-day technical strategy returns $-4.48\\%$ (Sharpe $-0.276$) with 605 events. The fundamental edge over the 63-day technical book is 24.37 percentage points of return and 1.403 of Sharpe; over the 5-day book, 22.01 points and 1.380. The edge is uneven across years: 2021 is negative ($-1.9\\%$) while 2025 ($+46.4\\%$) and 2023 ($+18.2\\%$) carry the mean, and the fundamental strategy beats the 5-day technical strategy in three of five years on both return and Sharpe. Figure 1 shows \\$1 compounding to \\$2.13 for the fundamental book while both technical books end below \\$0.71.")]),
+ ("sub", "Fundamental vs. Technical Information"),
+ ("p", [("t", "Table 1 reports the five out-of-sample years for the MISS architecture. The most important result is not simply that the fundamental model achieves a higher average return. It does so while trading far less often. The long-horizon fundamental strategy records a mean annual return of 17.53\\% and a mean Sharpe ratio of 1.104 with approximately 32 portfolio trade events per year. The matched long-horizon technical strategy records $-6.84\\%$ annual return and $-0.299$ Sharpe with 254 events per year, while the five-day technical strategy records $-4.48\\%$ annual return and $-0.276$ Sharpe with approximately 605 trade events per year.")]),
+ ("p", [("t", "The advantage is not consistent in every year. The fundamental strategy is negative in 2021 ($-1.9\\%$) before its strongest relative years, and its two best absolute years are 2025 (46.4\\%) and 2023 (18.2\\%). This variation is important because it shows that fundamental information is not simply a guaranteed source of excess return. Rather, it appears to become more valuable when market conditions reward persistent company-level information. Across all five years, the fundamental model outperforms the short-horizon technical strategy in three years on both annual return and Sharpe, and it outperforms the matched long-horizon technical strategy in all five years on annual return.")]),
+ ("p", [("t", "Relative to the matched 63-day technical model, the long-horizon fundamental model improves mean annual return by 24.37 percentage points and Sharpe by 1.403. Relative to the short-horizon technical strategy, the improvement is 22.01 percentage points in annual return and 1.380 in Sharpe. Figure 1 also shows that the higher average result is not created by a smooth constant gain; performance varies substantially across years, with the fundamental curve compounding to a net asset value of 2.13 over the five years while both technical curves end below 0.71.")]),
  ("table1",),
  ("fig", "fig1_equity", "Cumulative net asset value of the three MISS information regimes, 2021--2025, net of 15 bps one-way costs. Fundamental 63d compounds \\$1 to \\$2.13; Technical 63d and 5d end at \\$0.67 and \\$0.71."),
- ("p", [("t", "Table 2 compares architectures under identical rules. MISS leads the fundamental task (Sharpe 1.104), ahead of GNN (0.839), LSTM (0.665), and StockMixer ($-0.239$). On technical tasks nothing is reliably positive: GNN (0.174) and LSTM (0.115) edge above zero on 63-day technicals, and every model is negative on the 5-day task (Figure 2).")]),
+ ("sub", "Model Architecture Comparison"),
+ ("p", [("t", "The next experiment tests whether the result comes only from choosing Mamba. Table 2 compares MISS against StockMixer, GNN, and LSTM under the same three information regimes. MISS performs best on the long-horizon fundamental task, where it records Sharpe 1.104 and annual return 17.53\\%, ahead of GNN (0.839), LSTM (0.665), and StockMixer ($-0.239$). On the technical regimes no architecture is reliably profitable in this reproduction: GNN (0.174) and LSTM (0.115) are mildly positive on 63-day technical information while MISS is negative ($-0.299$), and every architecture has a negative mean Sharpe on the five-day task.")]),
  ("table2",),
  ("fig", "fig2_arch_sharpe", "Mean out-of-sample Sharpe ratio by architecture and information regime (five-year means, net of 15 bps one-way costs). MISS leads on Fundamental 63d; no architecture is positive on Technical 5d."),
- ("p", [("t", "Table 3 gives the portfolio-independent explanation: mean out-of-sample RankIC of the scores. MISS has the strongest sector-demeaned fundamental RankIC (0.039), matching its portfolio rank. StockMixer's fundamental RankIC is negative ($-0.012$), so its last place is a signal failure rather than a backtest artifact. Every technical RankIC lies within $\\pm 0.03$ of zero, which is why those portfolios sit at or below zero under any construction.")]),
+ ("p", [("t", "This comparison suggests that architecture should be matched to the information being processed, but it also shows the limit of that claim. Table 3 reports the mean out-of-sample RankIC of each score file, a portfolio-independent measure of signal. MISS has the strongest sector-demeaned fundamental RankIC (0.039), which is exactly the ranking the portfolio in Table 2 produces. StockMixer's fundamental RankIC is negative ($-0.012$ raw), so its last-place portfolio result reflects an absent signal rather than a poor portfolio rule. Most strikingly, every technical RankIC is within $\\pm 0.03$ of zero, and MISS's 63-day technical RankIC is 0.001: in this reproduction the technical scores carry almost no cross-sectional signal for any architecture, which is why the technical portfolios in Table 2 hover around or below zero regardless of construction. Mamba's selective state updates appear useful when an important fundamental observation may need to remain in memory for a long period [[gu2023]]; no comparable advantage is available where the underlying signal itself is absent.")]),
  ("table3",),
- ("p", [("t", "The fundamental book turns over about 4.7 times NAV per year against roughly 63 for the 5-day book. Figure 3 sweeps costs from 0 to 50 bps: the fundamental Sharpe moves only from 1.136 to 1.028 (return 18.02\\% to 16.40\\%), while the 5-day technical strategy falls from 0.298 to $-1.558$.")]),
+ ("sub", "Turnover and Transaction Costs"),
+ ("p", [("t", "The original motivation for using long-horizon fundamental information is not only prediction accuracy but also the ability to generate a strategy that trades less frequently. Figure 3 increases one-way transaction costs from 0 to 50 basis points. The long-horizon fundamental portfolio turns over only about 4.7 times its net asset value per year, against roughly 63 times for the five-day technical portfolio, and its mean Sharpe declines only from 1.136 at zero cost to 1.028 at 50 bps (return 18.02\\% to 16.40\\%). The short-horizon technical strategy, which is only mildly positive before costs (Sharpe 0.298 at 0 bps), collapses to $-1.558$ at 50 bps. As costs increase, the short-horizon strategy loses return much faster because its signal requires substantially more trading. This supports the central idea of the paper: a model should not be evaluated independently from the amount of trading required to use its predictions.")]),
  ("fig", "fig3_cost_sensitivity", "Sensitivity of the three MISS strategies to one-way transaction costs, 0--50 bps (five-year means). Dashed line: 15 bps baseline. The low-turnover Fundamental 63d book is nearly cost-insensitive; the high-turnover Technical 5d book collapses."),
- ("p", [("t", "Robustness: the fundamental strategy beats the 5-day technical strategy on annual return in 3 of 5 years (exact one-sided sign test $p = 0.50$) and the 63-day technical strategy in all 5 years ($p = 0.031$). The block bootstrap gives an observed Sharpe difference of 1.520, 95\\% interval $[0.215, 2.880]$, $\\Pr(\\mathrm{diff} > 0) = 0.988$ (Figure 4). The fundamental MISS strategy is the only one of twelve configurations with Deflated Sharpe near 1.0 (benchmark $\\mathrm{SR}_0 = 0.828$); the rest are near zero. A vol-matched variant (top-7/bottom-7 at 150\\%/150\\% gross) returns 31.07\\% at Sharpe 0.950 with 27 events per year and 24.7\\% realized volatility, showing return and volatility scale with gross exposure while Sharpe barely moves.")]),
- ("fig", "fig4_bootstrap", "Moving-block bootstrap distribution of the Sharpe difference between the fundamental and short-horizon technical MISS strategies (10,000 resamples, 21-day blocks). Observed difference 1.52; $\\Pr(\\mathrm{diff} > 0) = 0.988$."),
+ ("sub", "Robustness Testing"),
+ ("p", [("t", "The main limitation of a five-year experiment is that five yearly observations do not provide enough statistical power for a strong significance claim. The fundamental strategy beats the short-horizon technical strategy on annual return in three of five years. A one-sided exact sign test for three or more wins out of five gives p = 0.50. Against the matched long-horizon technical strategy, the fundamental strategy wins all five years, corresponding to p = 0.031. The block bootstrap is more informative than the year count: the observed Sharpe difference between the fundamental and short-horizon technical strategies is 1.520 (bootstrap mean 1.530, 95\\% interval [0.215, 2.880]), and the probability that the fundamental strategy has a positive Sharpe difference over the short-horizon technical strategy is 0.988 (Figure 4). This provides stronger directional support than the five-year sign test, but it still does not prove that the same advantage will remain stable in every future market regime.")]),
+ ("fig", "fig4_bootstrap", "Moving-block bootstrap distribution of the Sharpe difference between the fundamental and short-horizon technical MISS strategies (10,000 resamples, 21-day blocks). The observed difference is 1.52 and $\\Pr(\\mathrm{diff} > 0) = 0.988$."),
+ ("p", [("t", "Two further checks harden the result. First, under the Deflated Sharpe Ratio framework of Bailey and L\\'{o}pez de Prado [[bailey2014]], which adjusts for the twelve configurations evaluated, the MISS fundamental strategy is the only configuration with a Deflated Sharpe Ratio of approximately 1.0 (benchmark SR0 = 0.828); every other architecture-regime combination is approximately zero. Second, the result is not an artifact of one gross-exposure choice: scaling the same signals to a vol-matched book (top-7/bottom-7 at 150\\%/150\\% gross) produces a mean annual return of 31.07\\%, a Sharpe of 0.950, 27 trade events per year, and realized volatility of 24.7\\%, i.e. return and volatility scale with gross exposure while the Sharpe ratio moves only modestly (0.950 versus 1.104). The robustness results therefore support a narrower conclusion. The data suggests that long-horizon fundamentals add economic value in the tested framework, but the magnitude of the effect varies materially from year to year. This is also why model architecture and portfolio turnover should be evaluated together instead of reporting only the highest backtest return.")]),
 ]
 
 DISCUSSION = [
- ("p", [("b", "Restatement of Key Findings. "),
-  ("t", "Across five out-of-sample years, long-horizon fundamental signals beat both technical benchmarks as portfolios, and MISS beat every baseline architecture on fundamentals in both Sharpe (1.104) and signal quality (demeaned RankIC 0.039).")]),
- ("p", [("b", "Implications and Significance. "),
-  ("t", "The results support matching the data's frequency, the model's memory, and the portfolio's trading frequency. Mamba's selective memory fits sparse fundamental data: a few observations matter for months. The same architecture shows no edge where the signal is absent, which bounds the claim honestly.")]),
- ("p", [("b", "Connection to Objectives. "),
-  ("t", "The first objective is met on means and on the 5-of-5 yearly comparison against matched technicals, though the 3-of-5 result against the 5-day strategy is not significant by the sign test alone; the bootstrap is stronger. The second is met for fundamentals; for technicals, no architecture found signal. The third is met: the edge survives 50 bps costs and multiple-testing adjustment.")]),
- ("p", [("b", "Recommendations. "),
-  ("t", "Future work should widen point-in-time fundamental coverage toward the full 500 names, test longer histories, add factor regressions, and study performance by liquidity and market-cap bucket. Retraining the technical and StockMixer models is the direct route to testing whether their gaps are training artifacts.")]),
- ("p", [("b", "Limitations. "),
-  ("t", "Five years cannot cover every regime, and the year path (notably 2021) differs from what a fuller universe might show. Sector neutrality does not remove factor exposures. Costs are modeled flat at 15 bps and vary in practice.")]),
- ("p", [("b", "Closing Thought. "),
-  ("t", "The practical lesson is simple: trade slowly, remember longer, and let the data's own clock set the strategy.")]),
+ ("p", [("t", "This paper evaluates whether fundamental information can be more useful for stock prediction when the prediction and trading horizon is intentionally extended. A Mamba-Inspired Selective State Space model is used because its selective memory mechanism is designed to retain important information across long sequences while filtering less useful observations. Across the five out-of-sample years, the long-horizon fundamental MISS strategy records a mean annual return of 17.53\\% and a Sharpe ratio of 1.104, compared with $-6.84\\%$ and $-0.299$ for matched long-horizon technical information and $-4.48\\%$ and $-0.276$ for the five-day technical strategy. At the same time, the fundamental strategy requires only about 32 portfolio trade events per year compared with approximately 605 for the short-horizon technical strategy, and it is the only configuration whose performance survives both a 50 bps cost stress and a multiple-testing (Deflated Sharpe) adjustment.")]),
+ ("p", [("t", "The model comparison also shows that the conclusion is not simply that Mamba is better than every other neural-network architecture. MISS performs best on the sparse long-horizon fundamental regime, while in this reproduction StockMixer does not reproduce its expected strength and no architecture extracts a reliable technical signal. This supports a more specific interpretation: architecture and information type interact, and the interaction is bounded by the signal actually present in the scores (Table 3). Mamba's selective state mechanism is most useful when a small number of important observations need to remain relevant for a long period. GNNs provide another competitive direction (Sharpe 0.839 on the fundamental task) because stock prices are not independent and relationships between firms can carry predictive information.")]),
+ ("p", [("t", "There are still several limitations. Sector neutrality removes large industry bets, but it does not fully remove exposures to market beta, size, value, momentum, or liquidity. Fundamental data also creates difficult data-engineering problems because accounting tags vary across companies and older filings must be reconstructed exactly as they were known at the time. Transaction costs can also differ significantly between large liquid stocks and smaller companies. Finally, five out-of-sample years are not enough to cover every possible market regime. Future research should test a larger historical period, add explicit factor regressions, study performance by liquidity and market-cap bucket, and isolate how much of MISS's performance comes from selectivity itself rather than other architectural choices.")]),
+ ("p", [("t", "Because this edition reports an independent reproduction, three differences from the values circulated with the original study deserve explicit statement. First, the fundamental Sharpe ratio is close to the 1.221 reported previously (1.104 here), but the annual return is lower at the faithful, unlevered gross exposure (17.53\\% versus 32.72\\%) because realized portfolio volatility is 13.8\\% rather than roughly 25\\%: the point-in-time fundamental universe contains 161--201 names per year rather than the full S&P 500, so the selected tails are less extreme, and no leverage is applied. Scaling gross exposure to match that volatility recovers a 31.07\\% mean return at a Sharpe of 0.950 (see Robustness Testing above), which locates the difference in exposure and universe breadth rather than in the signal. Second, the previously reported strength of StockMixer and of the technical regimes does not reproduce: the retrained technical scores carry near-zero out-of-sample RankIC for every architecture, and StockMixer's fundamental RankIC is negative (Table 3), so those portfolio results cannot be recovered by any portfolio construction applied to these scores. Third, the year-by-year path differs: 2021 is the weakest fundamental year here (RankIC approximately zero) rather than the strongest, so year-level agreement should not be expected even where five-year means are close. These are limitations of the reproduction's data coverage and training runs, and they are stated here so the results can be judged on what was actually measured.")]),
 ]
 
 SECTIONS = [
@@ -230,7 +230,7 @@ def tex_table1():
 def tex_table2():
     def row(r):
         return " & ".join([r[0]] + [num_tex(x) for x in r[1:]]) + r" \\"
-    body = ("\\begin{tabular}{l rrr}\n\\toprule\n"
+    body = ("\\begin{tabular}{l rrrr}\n\\toprule\n"
             "\\multicolumn{4}{l}{\\textit{Sharpe ratio}} \\\\\n"
             "Model & Fund. 63d & Tech. 63d & Tech. 5d \\\\\n\\midrule\n"
             + "\n".join(row(r) for r in T2_SHARPE)
@@ -242,9 +242,6 @@ def tex_table2():
             + body + "\n\\end{table}\n")
 
 def tex_table3():
-    def row(r):
-        cells = [r[0]] + [("$\\mathbf{%s}$" % x if False else num_tex(x)) for x in r[1:]]
-        return " & ".join(cells) + r" \\"
     rows = []
     for r in T3:
         cells = [r[0]] + [num_tex(x) for x in r[1:]]
@@ -263,6 +260,10 @@ def tex_fig(name, caption):
             "\\includegraphics[width=0.92\\textwidth]{figures/%s.pdf}\n"
             "\\caption{%s}\n\\end{figure}\n") % (name, caption)
 
+def tex_eq(latex, numbered=True):
+    env = "equation" if numbered else "equation*"
+    return "\\begin{%s}\n%s\n\\end{%s}\n" % (env, latex, env)
+
 def build_tex(order):
     L = []
     L.append(r"""\documentclass[12pt]{article}
@@ -279,7 +280,6 @@ def build_tex(order):
 \setlength{\parskip}{4pt plus 1pt}
 """)
     L.append("\\title{%s}\n\\date{October 2026}\n\n\\begin{document}\n\\maketitle\n" % TITLE)
-    # abstract word count
     atext = " ".join(t for _, t in ABSTRACT)
     atext = CITE_RE.sub("", atext)
     atext = atext.replace("\\\\%", "%").replace("\\\\$", "$").replace("--", " ").replace("$", "")
@@ -294,6 +294,12 @@ def build_tex(order):
             if b[0] == "p":
                 segs = b[1] if title == "Abstract" else [x for x in b[1] if x[0] != "b"]
                 L.append(tex_par(segs))
+            elif b[0] == "sub":
+                L.append("\\subsection{%s}\n" % tex_escape(b[1]))
+            elif b[0] == "eq":
+                L.append(tex_eq(tex_escape(b[1]), numbered=True))
+            elif b[0] == "eq*":
+                L.append(tex_eq(tex_escape(b[1]), numbered=False))
             elif b[0] == "table1":
                 L.append(tex_table1())
             elif b[0] == "table2":
@@ -309,22 +315,6 @@ def build_tex(order):
     return "".join(L)
 
 # ---------------------------------------------------------------- docx
-def docx_text_runs(par, s):
-    """Add runs to a docx paragraph, converting [[k1,k2]] to ((...)) cites."""
-    pos = 0
-    for m in CITE_RE.finditer(s):
-        if m.start() > pos:
-            par.add_run(docx_clean(s[pos:m.start()]))
-        keys = m.group(1).split(",")
-        for j, k in enumerate(keys):
-            if j > 0:
-                r = par.add_run(",")
-                r.font.superscript = True
-            par.add_run("((%s))" % ref_docx(k))
-        pos = m.end()
-    if pos < len(s):
-        par.add_run(docx_clean(s[pos:]))
-
 def docx_clean(s):
     s = s.replace("\\\\%", "%").replace("\\\\$", "$").replace("\\\\&", "&")
     s = s.replace("---", "\u2014").replace("--", "\u2013")
@@ -336,8 +326,6 @@ def docx_par(doc, segs, style=None):
     for kind, t in segs:
         t = docx_clean(t)
         pos = 0
-        buf = ""
-        # split text and cite markers, preserving bold for text runs
         for m in CITE_RE.finditer(t):
             if m.start() > pos:
                 r = p.add_run(t[pos:m.start()])
@@ -357,8 +345,8 @@ def docx_par(doc, segs, style=None):
     pf.space_after = Pt(4)
     return p
 
-def docx_add_table(doc, caption, header, rows, widths=None):
-    from docx.shared import Pt, Inches
+def docx_add_table(doc, caption, header, rows):
+    from docx.shared import Pt
     cap = doc.add_paragraph()
     r = cap.add_run(caption)
     r.bold = True
@@ -393,6 +381,10 @@ def build_docx(order):
             if b[0] == "p":
                 segs = b[1] if title == "Abstract" else [x for x in b[1] if x[0] != "b"]
                 docx_par(doc, segs)
+            elif b[0] == "sub":
+                doc.add_heading(docx_clean(b[1]), level=2)
+            elif b[0] in ("eq", "eq*"):
+                p = doc.add_paragraph(); p.add_run("$ " + docx_clean(b[1]) + " $")
             elif b[0] == "table1":
                 docx_add_table(doc, "Table 1. Five-year out-of-sample results for the MISS architecture, net of 15 bps one-way costs. Events are portfolio trade/rebalance events per year.",
                     ["Strategy", "2021 Ret.", "SR", "Ev.", "2022 Ret.", "SR", "Ev.", "2023 Ret.", "SR", "Ev.", "2024 Ret.", "SR", "Ev."], T1A)
