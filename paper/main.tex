@@ -49,80 +49,195 @@ transaction costs; sector neutrality.
 
 \section{Introduction}
 
-Stock price prediction is a core problem in financial machine learning,
-and neural networks are popular for it because they can fit the nonlinear
-structure of markets. Most published models aim a few days out and are
-scored on prediction metrics, which says little about whether a small
-accuracy gain survives turnover and transaction costs once it becomes a
-portfolio \cite{fischer2018,demiguel2020}. This paper takes a different
-angle: slow-moving fundamental data, a model with long memory, and a
-portfolio that barely trades.
+The goal of accurately predicting stock prices has been the core purpose
+of financial machine learning research for decades. This research is
+valuable to investors, as better predictions can help create more robust
+and consistent investment strategies. Neural networks are particularly
+useful for achieving this task, as their ability to capture non-linear
+trends is key for navigating the complex space of stock markets. That is
+why individual researchers along with large asset managers and funds are
+increasingly using Artificial Intelligence (AI) to generate accurate
+stock price signals \cite{fischer2018,gkx2020}. To accurately evaluate
+stock prediction methodologies, it is necessary to analyze each
+underlying variable. Indeed, AI has already transformed the financial
+sector by automating tasks like fraud detection, risk assessment, credit
+scoring, and algorithmic trading \cite{lopez2018}. A growing sector of
+this field is stock price prediction (SPP), where models are directly
+used to predict future stock returns or price movements. AI is employed
+for this task because of its ability to recognize patterns in data that
+humans normally would not be able to. For example, Fischer and Krauss
+demonstrated that deep LSTM networks can generate statistically
+significant daily return signals across a universe of S\&P 500
+constituents over a long out-of-sample period \cite{fischer2018}.
 
-Stock prices move on fundamentals, technicals, and sentiment: earnings and
-balance sheets set value, order flow and volatility move price in the
-short run, and news shocks hit investor psychology. The Sharpe ratio is
-the natural way to score a strategy, since it prices the volatility a
-return costs. Financial data is noisy, nonstationary, and short --- roughly
-250 trading days a year per stock --- yet nonlinear models have found
-useful signals in large panels \cite{fischer2018,gkx2020}.
+Stock prices are not just related to the company; a variety of factors
+influence prices. Financial machine learning models typically ingest
+fundamental, technical, and sentimental factors. Fundamentally, the
+company's earnings, products, balance sheet, and broader economic
+indicators like interest rates and inflation all affect how inherently
+valuable a company is. On a technical level, market dynamics like supply
+and demand, liquidity, volume, volatility, and a variety of trading
+patterns can move stock prices in the short term. Finally, at a sentiment
+level, news events like wars, political decisions, and government
+policies may affect investor psychology, driving price movement. To
+evaluate investment strategies, metrics like the Sharpe Ratio reveal how
+stable an investor's strategy is by comparing excess return against the
+volatility needed to achieve that return.
 
-We build a Mamba selective state space model on SEC fundamental data,
-run it as a sector-neutral long-short portfolio, and evaluate it across
-five out-of-sample years with walk-forward retraining and robustness
-checks. To separate data from architecture, the same setup runs on
-long-horizon and short-horizon technical data, and MISS is compared
-against LSTM, StockMixer, and GNN models on annual return, Sharpe ratio,
-turnover, drawdown, cost sensitivity, block bootstrap tests, and the
-Deflated Sharpe Ratio \cite{bailey2014}. Section 2 reviews the literature,
-Section 3 the method, Section 4 the results, and Section 5 concludes.
+Leveraging AI to accurately predict the future value of a stock presents
+a number of challenges that must be overcome. Stock datasets inherently
+contain a large amount of noise that models must learn to filter out
+while retaining useful variables \cite{harvey2016}. The complex nature
+of how stock markets behave means that while a variety of factors affect
+a stock price, those factors can change at any moment. The amount of
+time-series data for an individual stock is also inherently limited, as
+there are only around 250 trading days a year. However, recent research
+has still shown that nonlinear ML models can identify economically useful
+signals from large stock panels \cite{fischer2018,gkx2020}.
+
+Currently, the majority of stock-prediction research has been oriented
+towards short-term price prediction, and many papers still evaluate
+models primarily with statistical prediction metrics instead of
+deploying their signals into simulated portfolios. This makes it
+difficult to tell whether a small improvement in prediction actually
+becomes a better investment strategy after turnover and transaction
+costs are included \cite{fischer2018,demiguel2020}. Thus, we present a
+novel investment framework that leverages SEC fundamental data within a
+Mamba selective state space model to generate low-turnover,
+sector-neutral signals evaluated across five out-of-sample years using
+walk-forward validation and robustness diagnostics. To understand whether
+the gains come from the data or only from the architecture, the same
+experiment is also conducted with long-horizon technical data and
+short-horizon technical data, and MISS is compared against LSTM,
+StockMixer, and GNN models. To evaluate results, we leverage portfolio
+metrics like annual return, Sharpe ratio, turnover, maximum drawdown,
+transaction-cost sensitivity, block bootstrap testing, and the Deflated
+Sharpe Ratio framework \cite{bailey2014}.
+
+The rest of this paper is organized as follows: Section 2 offers a brief
+literature review of the financial machine learning (ML) field. Section
+3 presents the method proposed. Section 4 showcases the results of the
+experiments. The final section concludes this paper and discusses future
+directions of research.
 
 \section{Literature Review}
 
+Significant progress has been made in the field of financial machine
+learning (ML), transitioning from fundamental feed-forward neural
+networks to complex architectures like the Transformer and State Space
+Models. This review highlights the architectural progress of the field
+while critiquing the current short-term technical bias and the lack of
+practical portfolio application.
+
 \subsection{Deep Learning in Financial Time Series}
 
-Feed-forward networks gave way to LSTMs, whose gates mitigate the
-vanishing-gradient problem and hold long-range dependencies
-\cite{hochreiter1997,rumelhart1986}. Transformers then brought
-self-attention to financial series \cite{vaswani2017}, at quadratic cost
-in sequence length --- painful when long history matters. Recent work
-moved past both: StockMixer mixes indicators, time, and stocks with light
-MLP blocks \cite{fan2024}, and graph networks treat stocks as linked
-entities so firm relationships aid cross-sectional ranking
-\cite{feng2019,qian2024}. They are natural baselines here because they
-attack different pieces of the problem: temporal memory, feature mixing,
-and cross-stock relations.
+Basic approaches using simple feed-forward networks have been replaced
+with complex architectures designed to properly ingest complex
+time-series data. LSTM networks have been a main choice of model due to
+their capacity to retain historical state information through gates that
+selectively store or forget information over time \cite{hochreiter1997}.
+By mitigating the vanishing gradient problem present in standard RNNs,
+LSTMs can capture longer-range temporal dependencies in market data
+\cite{rumelhart1986}. Recently, the Transformer architecture has also
+been adapted for financial time series \cite{vaswani2017}. This model
+uses the self-attention mechanism to simultaneously weigh the relevance
+of previous steps, unlike LSTMs which process data sequentially. This
+approach allows the model to detect relationships between distant
+observations and between different features. However, standard
+Transformer attention introduces quadratic computational cost with
+sequence length, making it more expensive when a large amount of
+historical context is required.
+
+More recent financial models have started exploring architectures beyond
+LSTMs and Transformers. StockMixer directly mixes information across
+indicators, time, and stocks through lightweight MLP blocks, allowing
+dense technical information to interact without a costly attention layer
+\cite{fan2024}. Graph Neural Networks (GNNs) take a different approach by
+treating stocks as connected entities rather than independent time
+series. Relational stock-prediction models have shown that industry
+links and other relationships between firms can improve cross-sectional
+ranking because information about one company may also contain
+information about connected companies \cite{feng2019,qian2024}. These
+models provide useful comparisons for MISS because they solve different
+parts of the same problem: temporal memory, cross-feature mixing, and
+cross-stock relationships.
 
 \subsection{Short-Term Technical Bias}
 
-Most literature ingests daily or intraday OHLCV plus technical indicators
-to predict days-ahead moves \cite{fischer2018}. Even accurate short-horizon
-signals can churn into microstructure noise and get eaten by transaction
-costs, and costs can flip which characteristics stay useful after trading
-\cite{demiguel2020}. A low-turnover strategy and slower-moving
-fundamentals \cite{shiller1981} are the obvious counter.
+The majority of recent literature relies heavily on daily or intraday
+OHLCV (Open-High-Low-Close-Volume) data combined with technical
+indicators; studies often target price movements merely a few days into
+the future \cite{fischer2018}. This short-term technical bias means that
+even when models achieve useful directional accuracy, they can generate
+high-turnover signals that are vulnerable to market microstructure noise
+and transaction costs. Research on portfolio construction has
+demonstrated that transaction costs can materially change which stock
+characteristics remain useful after trading is accounted for
+\cite{demiguel2020}. Due to these costs, the need for a lower-turnover
+strategy becomes apparent. Research should therefore also consider market
+fundamentals that move prices over longer periods rather than only
+short-lived technical price moves \cite{shiller1981}.
 
 \subsection{Fundamental Data}
 
-SEC filings, earnings, cash flow, and balance-sheet ratios are barely used
-in neural stock models. The data is sparse --- quarterly, not daily ---
-and demands strict point-in-time alignment so a filing never enters the
-features before it was public. But it describes the company itself, and Gu,
-Kelly, and Xiu show machine learning can pull strong nonlinear
-relationships from firm-characteristic panels \cite{gkx2020}; SEC EDGAR
-metadata makes the point-in-time alignment feasible \cite{sec2025}.
+Leveraging fundamental data such as SEC filings, earnings, cash flow,
+valuation ratios, and balance-sheet information within neural networks is
+a significantly sparser area of research. Fundamental data is harder for
+models to digest because it is inherently sparse, with many accounting
+variables released quarterly rather than daily, and it is subject to
+strict point-in-time constraints to avoid look-ahead bias. However,
+integrating these economic indicators allows models to capture
+information that is more directly connected to the company itself. Gu,
+Kelly, and Xiu show that machine-learning methods can extract strong
+nonlinear relationships from large panels of firm characteristics,
+supporting the broader idea that accounting and market characteristics
+contain meaningful cross-sectional information \cite{gkx2020}. In
+practice, any such pipeline must also ensure that a filing does not enter
+the data before it was actually made public; SEC EDGAR filing metadata
+makes this point-in-time alignment possible \cite{sec2025}.
 
-\subsection{State Space Models and Portfolio Evaluation}
+\subsection{Mamba-Inspired State Space Models}
 
-Mamba is a selective state space model: linear cost in sequence length,
-and input-dependent state updates that keep useful observations while
-letting noise fade \cite{gu2023}. An earnings update can matter for months
-while daily price jitter should not --- exactly the asymmetry a
-fundamental model needs. That said, architecture should not be confused
-with profitability: a model with lower prediction error can still lose
-money if it trades too much or blows up in volatile stretches, and
-testing many variants can fake significance \cite{harvey2016}. Hence the
-portfolio-level evaluation and the Deflated Sharpe adjustment used here
-\cite{bailey2014}.
+The primary innovation of this paper is the application of Selective
+State Space Models (SSMs), specifically the Mamba architecture
+\cite{gu2023}. This newer framework attempts to resolve issues present in
+both Transformers and recurrent models. Mamba's computational cost grows
+linearly with sequence length, as it processes a sequence through
+recurrent state updates instead of computing full pairwise
+self-attention. More importantly for this research, the architecture
+selectively changes how inputs affect the hidden state based on the
+current input. This creates a mechanism that can keep useful information
+while allowing irrelevant information to disappear. In financial data,
+this is especially useful because an earnings or balance-sheet update may
+stay important for months while individual day-to-day price fluctuations
+may not.
+
+This does not mean that Mamba should automatically outperform every
+model. StockMixer is specifically designed to mix dense market features
+across time and stocks, while GNN models can directly represent
+relationships among firms. For this reason, the experiments compare
+architectures under the same portfolio construction rather than only
+comparing MISS to an older LSTM baseline. The purpose is to test whether
+selective state-space memory is particularly useful for sparse,
+long-horizon fundamental information instead of claiming that one
+architecture is universally superior.
+
+\subsection{Portfolio Construction vs.\ Point Prediction}
+
+Finally, a critical disconnect exists between model accuracy measured by
+metrics such as Mean Squared Error (MSE) and actual trading
+profitability. A model can achieve a lower prediction error and still
+lose money if it is overfit, trades too frequently, or makes its largest
+mistakes during highly volatile periods. Financial ML is especially
+vulnerable to this problem because testing many models, factors, and
+hyperparameters can make a backtest appear significant by chance
+\cite{harvey2016}. To address these issues, research has shifted towards
+using portfolio metrics and more advanced statistical controls. The
+Deflated Sharpe Ratio adjusts an observed Sharpe ratio for selection
+bias, non-normal returns, and the number of strategies or model
+configurations that were tested \cite{bailey2014}. This paper therefore
+evaluates the complete portfolio rather than judging the model only from
+prediction error.
 
 \section{Methodology}
 
