@@ -292,7 +292,8 @@ def build_tex(order):
             continue
         for b in blocks:
             if b[0] == "p":
-                L.append(tex_par(b[1]))
+                segs = b[1] if title == "Abstract" else [x for x in b[1] if x[0] != "b"]
+                L.append(tex_par(segs))
             elif b[0] == "table1":
                 L.append(tex_table1())
             elif b[0] == "table2":
@@ -390,7 +391,8 @@ def build_docx(order):
             continue
         for b in blocks:
             if b[0] == "p":
-                docx_par(doc, b[1])
+                segs = b[1] if title == "Abstract" else [x for x in b[1] if x[0] != "b"]
+                docx_par(doc, segs)
             elif b[0] == "table1":
                 docx_add_table(doc, "Table 1. Five-year out-of-sample results for the MISS architecture, net of 15 bps one-way costs. Events are portfolio trade/rebalance events per year.",
                     ["Strategy", "2021 Ret.", "SR", "Ev.", "2022 Ret.", "SR", "Ev.", "2023 Ret.", "SR", "Ev.", "2024 Ret.", "SR", "Ev."], T1A)
